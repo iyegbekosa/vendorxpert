@@ -1,0 +1,12 @@
+{% extends 'core/base.html' %}
+
+{% block title %} Contact {% endblock title %}
+
+{% block body %}
+    <h1>Contact Page</h1>
+    <form method="POST" action="">
+        <input type="text" placeholder="Fullname" name="name">
+        <input type="text" placeholder="Message" name="content">
+        <button>Send</button>
+    </form>            
+{% endblock body %}

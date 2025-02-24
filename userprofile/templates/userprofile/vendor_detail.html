@@ -1,0 +1,16 @@
+{% extends 'core/base.html' %}
+
+{% block title %}Vendor Detail{% endblock title %}
+
+{% block body %}
+    {{ user.username }}
+    {% for products in product %}
+        <div>
+            <a href="{% url 'product_detail' products.category.slug products.slug %}"><p>{{ products.title }}</p></a>
+            <p>{{ products.display_price }}</p>
+            {% if products.product_image %}
+            <img src="{{ products.product_image.url }}" alt="image of {{products.title}}">
+            {% endif %}
+        </div>
+{% endfor %}
+{% endblock body %}

@@ -1,0 +1,12 @@
+{% extends 'core/base.html' %}
+
+{% block title %} {{ title }} {% endblock title %}
+
+{% block body %}
+<h1>{{ title }}</h1>
+    <form method="POST" enctype="multipart/form-data" name="review_form">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <input type="submit">
+    </form>
+{% endblock body %}

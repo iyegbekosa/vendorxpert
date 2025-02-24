@@ -1,0 +1,11 @@
+{% extends 'core/base.html' %}
+
+{% block title %} FAQ {% endblock title %}
+
+{% block body %}
+    <h1>FAQ Page</h1>
+    {% for faqs in faq %}
+        {{faq.title}}<br>
+        {{faq.content}}<br>
+    {% endfor %}
+{% endblock body %}

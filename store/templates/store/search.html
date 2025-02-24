@@ -1,0 +1,13 @@
+{% extends 'core/base.html' %}
+<h1>Showing results for: "{{ query }}"</h1>
+
+{% block title %} {{ query }} {% endblock title %}
+
+{% block body %}
+{% if product %}
+    {% include "store/partials/product.html" %}
+{% else %}
+There are no products matching this query
+{% endif %}
+
+{% endblock body %}

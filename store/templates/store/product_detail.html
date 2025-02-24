@@ -1,0 +1,46 @@
+{% extends 'core/base.html' %}
+
+{% block title %}Product Detail{% endblock title %}
+
+{% block body %}
+<section class="py-5">
+    <div class="container px-4 px-lg-5 my-5">
+        <div class="row gx-4 gx-lg-5 align-items-center">
+            {% if product.product_image %}
+            <div class="col-md-6"><img class="card-img-top mb-5 mb-md-0" src="{{ product.product_image.url }}" alt="image of {{product.title}}"></div>
+            {% endif %}
+            <div class="col-md-6">
+                <div class="small mb-1">Vendor: <a href="{% url 'vendor_detail' product.vendor.id %}">{{product.user.username }}</a></div>
+                <h1 class="display-5 fw-bolder">{{ product.title }}</h1>
+                <div class="fs-5 mb-5">
+                    <span>&#8358;{{ product.display_price }}</span>
+                </div>
+                {% if product.description %}
+                    <p class="lead">{{ product.description }}</p>
+                {% endif %}
+                {% for review in product.comments.all %}
+                    {{review.rating}}<br>
+                    {{review.subject}}<br>
+
+                    {% if review.text %}                    
+                        {{review.text}}<br>
+                    {% endif %}
+
+                    {{review.author}}<br>
+                    {% empty %}
+                    <p>No reviews</p>
+                {% endfor %}
+                <a href="{% url 'add_review' product.id %}">Write a review</a>
+                <div class="d-flex">
+                    <input class="form-control text-center me-3" id="inputQuantity" type="num" value="1" style="max-width: 3rem" />
+                    {% comment %} <a href="{% url 'add_to_cart' product.id %}">
+
+
+                            Add to cart
+
+                    </a>                 {% endcomment %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>{% endblock body %}

@@ -1,0 +1,39 @@
+{% extends 'core/base.html' %}
+
+{% block title %}My Store{% endblock title %}
+
+{% block body %}
+My products
+{% for order_items in order_item %}
+    <a href="{% url 'order_detail' order_items.order.id %}"><p>{{ order_items.order.id }}</p></a>
+    <p>{{ order_items.product.title }}</p>
+    <p>{{ order_items.quantity }}</p>
+    <p>{{ order_items.display_price }}</p>
+{% endfor %}
+
+<hr>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div>{{message}}</div>
+        {% endfor %}
+    {% endif %}
+
+    {% if product %}
+        {% for products in product %}
+        <div>
+            <a href="{% url 'product_detail' products.category.slug products.slug %}"><p>{{ products.title }}</p></a>
+            <p>{{ products.display_price }}</p>
+            {% if products.product_image %}
+                <img src="{{ products.product_image.url }}" alt="image of {{products.title}}">
+            {% endif %}
+        </div>
+        <a href="{% url 'edit_product' products.id %}">Edit Product</a>
+        <a href="{% url 'delete_product' products.id %}">Delete Product</a>
+
+        {% endfor %}
+    {% else %}
+        You don't have any products...
+    {% endif %}
+    <a href="{% url 'add_product' %}">Add Product</a>
+{% endblock body %}
