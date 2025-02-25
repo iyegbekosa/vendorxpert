@@ -31,7 +31,11 @@ def vendor_dashboard(request):
 @vendor_required
 def my_store(request):
     # product = request.user.product.exclude(status=Product.DELETED)
-    product = request.user.vendorprofile.product.exclude(status=Product.DELETED)
+    # product = request.user.vendor_profile.product.exclude(status=Product.DELETED)
+
+    vendor_profile = request.user.vendor_profile
+    product = Product.objects.filter(vendor=vendor_profile).exclude(status=Product.DELETED)
+
     return render(request, 'userprofile/my_store.html', {
         'product':product,
     })
@@ -44,7 +48,7 @@ def add_product(request):
         if form.is_valid():
             title = request.POST.get('title')
             product = form.save(commit=False)
-            product.vendor = request.user
+            product.vendor = request.user.vendor_profile
             product.slug = slugify(title)
             product.save()
             messages.success(request, f'{title} was added successfully')
@@ -61,7 +65,7 @@ def add_product(request):
 @vendor_required
 def edit_product(request, pk):
     # product = Product.objects.filter(user=request.user).get(pk=pk)
-    product = Product.objects.get(vendor=request.user.vendorprofile, pk=pk)
+    product = Product.objects.get(vendor=request.user.vendor_profile, pk=pk)
 
     if request.method == 'POST':
         form = ProductForm(request.POST, request.FILES, instance=product)
@@ -85,7 +89,7 @@ def edit_product(request, pk):
 @vendor_required
 def delete_product(request, pk):
     # product = Product.objects.filter(user=request.user).get(pk=pk)
-    product = Product.objects.get(vendor=request.user.vendorprofile, pk=pk)
+    product = Product.objects.get(vendor=request.user.vendor_profile, pk=pk)
     product.status = Product.DELETED
     product.save()
     title = product.title

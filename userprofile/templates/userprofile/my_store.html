@@ -1,4 +1,4 @@
-{% extends 'core/base.html' %}
+{% comment %} {% extends 'core/base.html' %}
 
 {% block title %}My Store{% endblock title %}
 
@@ -38,5 +38,50 @@
     {% else %}
         You don't have any products...
     {% endif %}
+    <a href="{% url 'add_product' %}">Add Product</a>
+{% endblock body %} {% endcomment %}
+
+
+{% extends 'core/base.html' %}
+
+{% block title %}My Store{% endblock title %}
+
+{% block body %}
+    <h1>My Store</h1>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div>{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+
+    <h3>My Products</h3>
+
+    {% if product %}
+        {% for product in product %}
+        <div>
+            <a href="{% url 'product_detail' product.category.slug product.slug %}">
+                <p>{{ product.title }}</p>
+            </a>
+            {% if product.product_image.url %}
+                <img src="{{ product.product_image.url }}" alt="Image of {{ product.title }}">
+            {% endif %}
+            <p>{{ product.display_price }}</p>
+
+            {% if product.reviews.exists %}
+                <p>Average Rating: {{ product.average_rating }}</p>
+            {% else %}
+                <p>No reviews</p>
+            {% endif %}
+        </div>
+
+        <a href="{% url 'edit_product' product.id %}">Edit Product</a>
+        <a href="{% url 'delete_product' product.id %}">Delete Product</a>
+
+        {% endfor %}
+    {% else %}
+        no product
+    {% endif %}
+    
     <a href="{% url 'add_product' %}">Add Product</a>
 {% endblock body %}
