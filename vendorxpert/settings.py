@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'core',
     'store',
     'phonenumber_field',
+    'django.contrib.humanize',
 ]
 
 MIDDLEWARE = [
@@ -121,7 +122,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Africa/Lagos'
 
 USE_I18N = True
 
@@ -146,3 +147,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'userprofile.UserProfile'
+
+PAYSTACK_SECRET_KEY = 'sk_test_662282b5b0bebbf21c9f5e21c1ad17f198ffbb09'
+
+ADMIN_SUBACCOUNT_CODE = "ACCT_t4cjkaxq2ldi4c2"

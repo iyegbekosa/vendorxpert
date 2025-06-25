@@ -161,7 +161,7 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class OrderItem(models.Model):
-    order = models.ForeignKey(Order, related_name='item', on_delete=models.CASCADE)
+    order = models.ForeignKey(Order, related_name='items', on_delete=models.CASCADE)
     product = models.ForeignKey(Product, related_name='item', on_delete=models.CASCADE)
     price = models.IntegerField()
     quantity =  models.IntegerField(default=1)
@@ -169,3 +169,12 @@ class OrderItem(models.Model):
     def display_price(self):
         return self.price/100
     
+
+class Payment(models.Model):
+    user = models.ForeignKey(UserProfile, on_delete=models.CASCADE)
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="payments")
+    ref = models.CharField(max_length=20, unique=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=10, default='pending')  # pending, paid, failed
+    created_at = models.DateTimeField(auto_now_add=True)
+    paystack_response = models.JSONField(null=True, blank=True)  # raw API response for reference
