@@ -119,3 +119,49 @@ class Review(models.Model):
     def __str__(self):
         return self.text[:50]
     
+
+class Order(models.Model):
+
+    ADMIN = "admin"
+    FACULTY = "faculty"
+    TETFUND = 'tetfund'
+    HALL_1 = 'hall_1'
+    HALL_2 = 'hall_2'
+    HALL_3 = 'hall_3'
+    HALL_4 = 'hall_4'
+    HALL_5 = 'hall_5'
+    HALL_6 = 'hall_6'
+    HALL_7 = 'hall_7'
+    HALL_8 = 'hall_8'
+
+    PICKUP_CHOICES = (
+        (ADMIN , "admin"),
+        (FACULTY , "faculty"),
+        (TETFUND , "tetfund"),
+        (HALL_1 , "hall_1"),
+        (HALL_2 , "hall_2"),
+        (HALL_3 , "hall_3"),
+        (HALL_4 , "hall_4"),
+        (HALL_5 , "hall_5"),
+        (HALL_6 , "hall_6"),
+        (HALL_7 , "hall_7"),
+        (HALL_8 , "hall_8"),
+    )
+
+    created_by = models.ForeignKey(UserProfile, related_name='order', on_delete=models.SET_NULL, null=True)
+    first_name = models.CharField(max_length=50)
+    last_name = models.CharField(max_length=50)
+    pickup_location = models.CharField(max_length=50, choices=PICKUP_CHOICES, default=ADMIN)
+    total_cost = models.IntegerField(blank=True, null=True)
+    is_paid = models.BooleanField(default=False)
+    merchant_id = models.CharField(max_length=250)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class OrderItem(models.Model):
+    order = models.ForeignKey(Order, related_name='item', on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, related_name='item', on_delete=models.CASCADE)
+    price = models.IntegerField()
+    quantity =  models.IntegerField(default=1)
+
+    def display_price(self):
+        return self.price/100

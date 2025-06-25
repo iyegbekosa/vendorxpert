@@ -57,6 +57,8 @@ class VendorProfile(models.Model):
     store_logo = models.ImageField(upload_to='store_logo', blank=True, null=True)
     store_description = models.TextField()
     phone_number = models.CharField(max_length=50, blank=True)
+    account_number = models.CharField(max_length=10)
+    bank_name = models.CharField(max_length=50)
     whatsapp_number = models.CharField(max_length=50, blank=True)
     instagram_handle = models.CharField(max_length=50, blank=True)
     tiktok_handle = models.CharField(max_length=50, blank=True)

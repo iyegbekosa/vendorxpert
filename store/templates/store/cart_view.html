@@ -1,0 +1,23 @@
+{% extends 'core/base.html' %}
+
+{% block title %}  {% endblock title %}
+
+{% block body %}
+   {% if cart|length %}
+      {% for item in cart %}
+         <img src="{{ item.product.get_thumbnail }}">
+         <p>Title: {{ item.product.title }}</p>
+         <p>&#8358;{{ item.product.display_price }}</p>
+         <p>Quantity: {{ item.quantity }}</p>
+         <div class="row gx-4 gx-lg-5 row-cols-2 row-cols-md-3 row-cols-xl-4 justify-content-center">
+            <p><a class="btn btn-primary" href="{% url 'change_quantity' item.product.id %}?action=increase">+</a></p>
+            <p><a class="btn btn-warning" href="{% url 'change_quantity' item.product.id %}?action=decrease">-</a></p>
+            <p><a class="btn btn-danger" href="{% url 'remove_from_cart' item.product.id %}">Remove</a></p>
+         </div>
+      {% endfor %}
+         <p>Total cost: {{ cart.get_total_cost }}</p>
+         <p><a class="btn btn-success" href="{% url 'checkout' %}">Checkout</a></p>
+   {% else %}
+      You dont have any items in your cart...
+   {% endif %}
+{% endblock body %}

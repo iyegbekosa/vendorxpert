@@ -1,18 +1,22 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.db.models import Q
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
-from .models import Product, Category, Review
+from .models import Product, Category, Review, OrderItem
 from .forms import ReviewForm
-from userprofile.models import VendorProfile
+from userprofile.models import VendorProfile, UserProfile
 from faker import Faker
 import random
+from .cart import Cart
+from .forms import OrderForm
 fake = Faker()
 
 
 
 def product_detail(request, category_slug, slug):
-    product = get_object_or_404(Product, slug=slug)
+    # product = get_object_or_404(Product, slug=slug)
+    product = get_object_or_404(Product, slug=slug, category__slug=category_slug)
     return render(request, 'store/product_detail.html', {
         'product':product
     })
@@ -44,11 +48,48 @@ def add_review_to_post(request, pk):
         if form.is_valid():
             review = form.save(commit=False)
             review.product = product
+            user_profile = get_object_or_404(UserProfile, email=request.user.email)
+            review.author = user_profile
             review.save()
             return redirect('product_detail', category_slug=product.category.slug, slug=product.slug)
     else:
         form = ReviewForm()
     return render(request, 'store/review_form.html', {'form': form})
+
+
+# @login_required
+# def delete_review(request, review_id):
+#     review = get_object_or_404(Review, id=review_id)
+
+#     if request.user == review.author:
+#         # Store product data before deleting the review
+#         product_slug = review.product.slug
+#         category_slug = review.product.category.slug
+
+#         review.delete()
+#         messages.success(request, "Your review has been deleted successfully.")
+
+#         return redirect('product_detail', category_slug=category_slug, slug=product_slug)
+    
+#     else:
+#         messages.error(request, "You are not authorized to delete this review.")
+#         return redirect('home')  # Redirect to a safe fallback page
+
+
+
+@login_required
+def delete_review(request, review_id):
+    review = get_object_or_404(Review, id=review_id)
+
+    if review.author != request.user:
+        messages.error(request, "You are not authorized to delete this review.")
+        return redirect('product_detail', pk=review.product.pk)
+
+    product = review.product
+    review.delete()
+
+    messages.success(request, "Your review has been deleted successfully.")
+    return redirect('product_detail', pk=product.pk)
 
 
 @login_required
@@ -62,6 +103,73 @@ def review_disapprove(request, pk):
     review = get_object_or_404(Review, pk=pk)
     review.disapprove()
     return redirect('product_detail', category_slug=review.product.category.slug, slug=review.product.slug)
+
+
+def add_to_cart(request, product_id):
+    cart = Cart(request)
+    cart.add(product_id)
+
+    return redirect('cart_view')
+
+
+def remove_from_cart(request, product_id):
+    cart = Cart(request)
+    cart.remove(product_id)
+
+    return redirect('cart_view')
+
+def cart_view(request):
+    cart = Cart(request)
+
+    return render(request, 'store/cart_view.html', {
+        'cart':cart
+    })
+
+def change_quantity(request, product_id):
+    action = request.GET.get('action','')
+    if action:
+        quantity = 1
+
+        if action == 'decrease':
+            quantity = -1
+        
+        cart = Cart(request)
+        cart.add(product_id, quantity, True)
+    
+    return redirect('cart_view')
+
+@login_required
+def checkout(request):
+    cart = Cart(request)
+    if request.method == 'POST':
+        form = OrderForm(request.POST)
+
+        if form.is_valid:
+            total_price = 0
+            for item in cart:
+                product = item['product']
+                total_price += product.price * int(item['quantity'])
+            
+            order = form.save(commit=False)
+            order.created_by = request.user
+            order.total_cost = total_price
+            order.save()
+
+            for item in cart:
+                product  = item['product']
+                quantity = item['quantity']
+                price = product.price * quantity
+
+                item = OrderItem.objects.create(order=order, product=product, quantity=quantity, price=price)
+
+                cart.clear()
+                return redirect('receipt')
+    else:
+        form = OrderForm()
+    return render(request, 'store/checkout.html', {
+       'cart':cart,
+       'form':form
+    })
 
 
 
@@ -105,4 +213,6 @@ def generate_fake_products(request, number_of_products=20, categories=None, vend
             featured=featured,
         )
         print(f"Created product: {product.title}")
-    
+
+def receipt(request):
+    return render(request, 'store/receipt.html')
