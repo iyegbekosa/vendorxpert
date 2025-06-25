@@ -2,8 +2,9 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.db.models import Q
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
-from .models import Product, Category, Review, OrderItem
+from django.views.decorators.csrf import csrf_exempt
+from django.http import FileResponse, JsonResponse, HttpResponse
+from .models import Product, Category, Review, OrderItem, Order
 from .forms import ReviewForm
 from userprofile.models import VendorProfile, UserProfile
 from faker import Faker
@@ -11,6 +12,15 @@ import random
 from .cart import Cart
 from .forms import OrderForm
 fake = Faker()
+from reportlab.lib.utils import ImageReader
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from django.conf import settings
+from django.urls import reverse
+from decimal import Decimal
+import requests
+import io
+import os
 
 
 
@@ -216,3 +226,198 @@ def generate_fake_products(request, number_of_products=20, categories=None, vend
 
 def receipt(request):
     return render(request, 'store/receipt.html')
+
+def initialize_split_payment(request):
+    if request.method != "POST":
+        return HttpResponse("Invalid request method.", status=405)
+
+    try:
+        data = request.POST
+        name = data.get('payment_type')
+        email = data.get('email')
+        level = data.get('level')
+        amount = float(data.get('amount'))
+
+        user = get_object_or_404(UserProfile, email=email)
+        payment_type = data.get('payment_type')  # "fee" or "skill"
+        session = data.get('session')
+        skill = data.get('skill')
+
+        print("Incoming payment_type:", payment_type)
+        print("Incoming session:", session)
+        print("Incoming skill:", skill)
+
+        # Get relevant payment object (your model for skill or session fees)
+        payment_obj = get_payment_model_instance(payment_type, session if payment_type == "fee" else skill)
+        payment_code = payment_obj.payment_code if payment_obj else "GEN"
+        print("Resolved payment_code:", payment_code)
+
+        # Set standardized `payment_for` for model field
+        if payment_type == "fee":
+            payment_for_label = "association_fee"
+        elif payment_type == "skill":
+            payment_for_label = "skill_acquisition"
+        else:
+            payment_for_label = None
+
+        # Create payment record in DB
+        payment = Order.objects.create(
+            user=user,
+            level=int(level),
+            amount=amount,
+            email=user.email,
+            name=name,
+            payment_for=payment_for_label
+        )
+
+        # Prepare Paystack payload
+        protocol = 'https' if request.is_secure() else 'http'
+        callback_url = f"{protocol}://{request.get_host()}{reverse('paystack_callback')}"
+        amount_kobo = int(amount * 100)
+
+        # Prepare split if applicable
+        split_info = settings.PAYSTACK_SPLITS.get(payment_code)
+        split = None
+
+        if split_info:
+            # Compute adjusted share (if needed)
+            base_amount = (amount - 200) / 1.015
+            new_amount = int(base_amount * 100)
+
+            if payment_code == "SKIL":
+                split = {
+                    "type": "flat",
+                    "currency": "NGN",
+                    "subaccounts": [
+                        {
+                            "subaccount": split_info["main_recipient"],
+                            "share": new_amount
+                        },
+                    ],
+                    "bearer_type": "account"
+                }
+
+            elif payment_code == "COLL":
+                split = {
+                    "type": "flat",
+                    "currency": "NGN",
+                    "subaccounts": [
+                        {
+                            "subaccount": split_info["flat_recipient"],
+                            "share": 1475000
+                        },
+                        {
+                            "subaccount": split_info["sub_recipient"],
+                            "share": 25000
+                        },
+                        {
+                            "subaccount": split_info["main_recipient"],
+                            "share": 500000
+                        }
+                    ],
+                    "bearer_type": "account"
+                }
+
+        # Construct payload
+        payload = {
+            "email": user.email,
+            "amount": amount_kobo,
+            "reference": payment.ref,
+            "callback_url": callback_url,
+        }
+
+        if split:
+            payload["split"] = split
+
+        headers = {
+            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        # Call Paystack
+        response = requests.post(
+            "https://api.paystack.co/transaction/initialize",
+            json=payload,
+            headers=headers
+        )
+
+        try:
+            print("Raw response:", response.content)
+            res_data = response.json()
+        except ValueError:
+            return HttpResponse(f"Paystack returned an invalid response: {response.text}", status=502)
+
+        print("Paystack Response:", response.status_code, res_data)
+
+        if response.status_code == 200 and res_data.get("status"):
+            return redirect(res_data["data"]["authorization_url"])
+        else:
+            return HttpResponse(f"Paystack error: {res_data.get('message', 'Unknown error')}", status=400)
+
+    except Exception as e:
+        return render(request, "error.html", {
+            "error_message": str(e),
+        })
+
+
+@csrf_exempt
+def paystack_callback(request):
+    ref = request.GET.get('reference')
+    if not ref:
+        return JsonResponse({"status": False, "message": "No reference found in URL"})
+
+    try:
+        payment = Order.objects.get(ref=ref)
+    except Order.DoesNotExist:
+        return JsonResponse({"status": False, "message": "Invalid reference"})
+
+    headers = {
+        "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"
+    }
+    response = requests.get(f"https://api.paystack.co/transaction/verify/{ref}", headers=headers)
+    result = response.json()
+
+    if result['status'] and result['data']['status'] == 'success':
+        payment.verified = True
+        payment.save()
+        return redirect('payment_receipt', ref=payment.ref)
+    else:
+        return render(request, 'error.html', {"error_message": "Payment not successful."})
+
+
+def payment_receipt(request, ref):
+    payment = get_object_or_404(Order, ref=ref)
+
+    if not payment.verified:
+        return render(request, "error.html", {"error_message": "Payment not verified."})
+
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=A4)
+
+    # Insert logo
+    logo_path = os.path.join(settings.BASE_DIR, 'static', 'logo.png')
+    if os.path.exists(logo_path):
+        p.drawImage(ImageReader(logo_path), 230, 750, width=120, height=60, preserveAspectRatio=True)
+
+    # Draw header text
+    p.setFont("Helvetica-Bold", 14)
+    p.drawCentredString(300, 730, "EDO UNIVERSITY IYAMHO MEDICAL STUDENTS ASSOCIATION")
+
+    # Payment info
+    p.setFont("Helvetica", 12)
+    p.drawString(100, 680, f"Name: {payment.user.get_full_name()}")
+    p.drawString(100, 660, f"Email: {payment.email}")
+    p.drawString(100, 640, f"Matriculation Number: {payment.user.mat_no}")
+    p.drawString(100, 620, f"Amount: NGN {payment.amount}")
+    p.drawString(100, 600, f"Reference: {payment.ref}")
+    p.drawString(100, 580, f"Status: SUCCESSFUL")
+    p.drawString(100, 560, f"Date: {payment.date_created.strftime('%d %B %Y, %I:%M %p')}")
+    # p.drawString(100, 540, f"Description: {payment.payment_for.description if payment.payment_for else 'N/A'}")
+
+    p.showPage()
+    p.save()
+
+    buffer.seek(0)
+    response = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    response['Content-Disposition'] = 'attachment; filename="payment_receipt.pdf"'
+    return response

@@ -8,6 +8,8 @@ from django.contrib.auth  import login
 from django.contrib import messages
 from store.forms import ProductForm
 from django.utils.text import slugify
+from store.utils import create_paystack_subaccount
+from django.db import transaction
 
 
 
@@ -30,9 +32,6 @@ def vendor_dashboard(request):
 
 @vendor_required
 def my_store(request):
-    # product = request.user.product.exclude(status=Product.DELETED)
-    # product = request.user.vendor_profile.product.exclude(status=Product.DELETED)
-
     vendor_profile = request.user.vendor_profile
     product = Product.objects.filter(vendor=vendor_profile).exclude(status=Product.DELETED)
 
@@ -64,7 +63,6 @@ def add_product(request):
 
 @vendor_required
 def edit_product(request, pk):
-    # product = Product.objects.filter(user=request.user).get(pk=pk)
     product = Product.objects.get(vendor=request.user.vendor_profile, pk=pk)
 
     if request.method == 'POST':
@@ -88,7 +86,6 @@ def edit_product(request, pk):
 
 @vendor_required
 def delete_product(request, pk):
-    # product = Product.objects.filter(user=request.user).get(pk=pk)
     product = Product.objects.get(vendor=request.user.vendor_profile, pk=pk)
     product.status = Product.DELETED
     product.save()
@@ -100,12 +97,31 @@ def delete_product(request, pk):
 
 def vendor_detail(request, pk):
     user = VendorProfile.objects.get(pk=pk)
-    # product = Product.objects.filter(status=Product.ACTIVE, stock=Product.IN_STOCK)
     product = Product.objects.filter(vendor=user, status=Product.ACTIVE, stock=Product.IN_STOCK)
     return render(request, 'userprofile/vendor_detail.html', {
         'user':user,
         'product':product
     })
+
+
+
+@transaction.atomic
+def register_vendor(request):
+    if request.method == 'POST':
+        # Save vendor basic details
+        vendor = VendorProfile.objects.create(
+            user=request.user,
+            store_name=request.POST['store_name'],
+            account_number=request.POST['account_number'],
+            bank_code=request.POST['bank_code'],
+        )
+        try:
+            create_paystack_subaccount(vendor)
+        except Exception as e:
+            # Optional: rollback or log
+            print("Subaccount error:", e)
+
+
 
 def signup(request):
     if request.method == 'POST':

@@ -6,6 +6,8 @@ from PIL import Image
 from django.utils import timezone
 from django.urls import reverse
 from django.db.models import Avg
+from phonenumber_field.modelfields import PhoneNumberField
+
 
 
 
@@ -151,6 +153,7 @@ class Order(models.Model):
     created_by = models.ForeignKey(UserProfile, related_name='order', on_delete=models.SET_NULL, null=True)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
+    phone = PhoneNumberField(default="08031234567")
     pickup_location = models.CharField(max_length=50, choices=PICKUP_CHOICES, default=ADMIN)
     total_cost = models.IntegerField(blank=True, null=True)
     is_paid = models.BooleanField(default=False)
@@ -165,3 +168,4 @@ class OrderItem(models.Model):
 
     def display_price(self):
         return self.price/100
+    

@@ -2,6 +2,7 @@ from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
+from phonenumber_field.modelfields import PhoneNumberField
 
 
 class CustomAccountManager(BaseUserManager):
@@ -52,14 +53,25 @@ class UserProfile(AbstractBaseUser, PermissionsMixin):
     
     
 class VendorProfile(models.Model):
+
+    BANK_CHOICES = [
+    ('044', 'Access Bank'),
+    ('058', 'GTBank'),
+    ('011', 'First Bank'),
+    ('232', 'Sterling Bank'),
+    ('033', 'UBA'),
+    ('063', 'Access Bank (Diamond)'),
+]
+
     user = models.OneToOneField(UserProfile, on_delete=models.CASCADE, related_name="vendor_profile")
     store_name = models.CharField(max_length=150)
     store_logo = models.ImageField(upload_to='store_logo', blank=True, null=True)
     store_description = models.TextField()
-    phone_number = models.CharField(max_length=50, blank=True)
+    phone_number = PhoneNumberField(unique=True, default="08031234567")
     account_number = models.CharField(max_length=10)
-    bank_name = models.CharField(max_length=50)
-    whatsapp_number = models.CharField(max_length=50, blank=True)
+    bank_code = models.CharField(max_length=50, choices=BANK_CHOICES, null=True)
+    subaccount_code = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    whatsapp_number = PhoneNumberField(unique=True, default="08031234567")
     instagram_handle = models.CharField(max_length=50, blank=True)
     tiktok_handle = models.CharField(max_length=50, blank=True)
     is_verified = models.BooleanField(default=False)
@@ -68,3 +80,6 @@ class VendorProfile(models.Model):
     def __str__(self):
         return f"{self.store_name} (Vendor: {self.user.user_name})"
     
+    def gen_paystack_code(self):
+        pass
+
