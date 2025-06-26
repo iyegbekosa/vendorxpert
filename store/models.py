@@ -63,7 +63,7 @@ class Product(models.Model):
         ordering = ('-created_at',)
 
     def display_price(self):
-        return self.price/100
+        return self.price
 
     def __str__(self):
         return self.title
@@ -159,12 +159,14 @@ class Order(models.Model):
     is_paid = models.BooleanField(default=False)
     merchant_id = models.CharField(max_length=250)
     created_at = models.DateTimeField(auto_now_add=True)
+    ref = models.CharField(max_length=50)
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, related_name='items', on_delete=models.CASCADE)
     product = models.ForeignKey(Product, related_name='item', on_delete=models.CASCADE)
     price = models.IntegerField()
     quantity =  models.IntegerField(default=1)
+    fulfilled = models.BooleanField(default=False)
 
     def display_price(self):
         return self.price/100

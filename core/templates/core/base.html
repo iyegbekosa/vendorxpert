@@ -16,8 +16,8 @@
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        &nbsp;&nbsp;&nbsp;<h3>VENDORXPERT</h3>
         <div class="container px-4 px-lg-5">
-            <p class="navbar-brand">VENDORXPERT</p>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
             <div class="collapse navbar-collapse" id="navbarSupportedContent">
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0 ms-lg-4">
@@ -25,7 +25,8 @@
                     {% if request.user.is_authenticated %}
                         {% comment %} <li class="nav-item"><a class="nav-link" href="{% url 'my_account' %}">My Account</a></li> {% endcomment %}
                         {% if request.user.is_vendor %}                        
-                            <li class="nav-item"><a class="nav-link" href="{% url 'my_store' %}">My Store</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'my_store'  %}">My Store</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'my_orders' %}">My Orders</a></li>
                         {% endif %}
                     {% else %}
                         <li class="nav-item"><a class="nav-link" href="{% url 'login' %}">Login</a></li>

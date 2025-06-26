@@ -1,0 +1,67 @@
+{% extends 'core/base.html' %}
+{% load humanize %}
+
+{% block title %}Order Details{% endblock %}
+
+{% block body %}
+<div class="container my-5">
+    <div class="card shadow p-4">
+        <h4 class="mb-4">Order Details - <span class="text-muted">#{{ order.ref }}</span></h4>
+
+        <div class="mb-3">
+            <strong>Buyer's Name:</strong> {{ order.first_name }} {{ order.last_name }}
+        </div>
+        <div class="mb-3">
+            <strong>Phone Number:</strong> {{ order.phone_number }}
+        </div>
+        <div class="mb-3">
+            <strong>Pickup/Delivery Address:</strong> {{ order.pickup_location }}
+        </div>
+        <div class="mb-3">
+            <strong>Order Date:</strong> {{ order.created_at|date:"D, d M Y H:i" }}
+        </div>
+        <div class="mb-3">
+            <strong>Payment Status:</strong>
+            {% if order.is_paid %}
+                <span class="badge bg-success">Paid</span>
+            {% else %}
+                <span class="badge bg-warning text-dark">Pending</span>
+            {% endif %}
+        </div>
+
+        <h5 class="mt-4">Items</h5>
+        <table class="table table-bordered mt-2">
+            <thead class="table-light">
+                <tr>
+                    <th>Product</th>
+                    <th>Quantity</th>
+                    <th>Unit Price</th>
+                    <th>Total</th>
+                    <th>Fulfilled</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in order.items.all %}
+                <tr>
+                    <td>{{ item.product.title }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>&#8358;{{ item.product.price|intcomma }}</td>
+                    <td>&#8358;{{ item.price|intcomma }}</td>
+                    <td>
+                        {% if item.fulfilled %}
+                            <span class="badge bg-success">Yes</span>
+                        {% else %}
+                            <span class="badge bg-danger">No</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="text-end">
+            <strong>Total Cost: &#8358;{{ order.total_cost|intcomma }}</strong>
+        </div>
+    </div>
+</div>
+{% endblock %}

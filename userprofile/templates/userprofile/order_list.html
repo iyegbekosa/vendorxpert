@@ -1,0 +1,61 @@
+{% extends 'core/base.html' %}
+{% load humanize %}
+
+{% block title %}Vendor Orders{% endblock %}
+
+{% block body %}
+<div class="container my-5">
+    <h2>Order Items</h2>
+    <table class="table table-hover">
+        <thead class="table-dark">
+            <tr>
+                <th>Product</th>
+                <th>Order Ref</th>
+                <th>Quantity</th>
+                <th>Price</th>
+                <th>Fulfilled</th>
+                <th>Action</th>
+                <th>Details</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in order_items %}
+            <tr>
+                <td>{{ item.product.title }}</td>
+                <td>{{ item.order.ref }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>&#8358;{{ item.price|intcomma }}</td>
+                <td>
+                    {% if item.fulfilled %}
+                        <span class="badge bg-info">Yes</span>
+                    {% else %}
+                        <span class="badge bg-secondary">No</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if item.order.is_paid %}
+                    <form method="POST" action="{% url 'toggle_fulfillment' item.pk %}">
+                        {% csrf_token %}
+                        <button class="btn btn-sm btn-outline-primary">
+                            {% if item.fulfilled %}Mark Unfulfilled{% else %}Mark Fulfilled{% endif %}
+                        </button>
+                    </form>
+                    {% else %}
+                        <span class="text-muted">Not paid</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if item.order.is_paid %}
+                    <a href="{% url 'order_details' item.pk %}">
+                    <button class="btn btn-sm btn-outline-success">See Details</button>
+                    </a>
+                    {% else %}
+                        <span class="text-muted">Not Available</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

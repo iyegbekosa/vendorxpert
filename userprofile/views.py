@@ -1,8 +1,8 @@
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from .models import UserProfile, VendorProfile
 from .custom_dec import vendor_required
-from store.models  import Product
+from store.models  import Product, OrderItem, Order
 from .forms import UserProfileSignupForm
 from django.contrib.auth  import login 
 from django.contrib import messages
@@ -10,6 +10,7 @@ from store.forms import ProductForm
 from django.utils.text import slugify
 from store.utils import create_paystack_subaccount
 from django.db import transaction
+from django.views.decorators.http import require_POST
 
 
 
@@ -138,3 +139,33 @@ def signup(request):
         form = UserProfileSignupForm()
     
     return render(request, 'userprofile/signup.html', {'form': form})
+
+
+@require_POST
+@login_required
+def toggle_fulfillment(request, pk):
+    order_item = get_object_or_404(OrderItem, pk=pk, product__vendor=request.user.vendor_profile)
+
+    if order_item.order.is_paid:
+        order_item.fulfilled = not order_item.fulfilled
+        order_item.save()
+
+    return redirect('my_orders')
+
+@login_required
+def order_list(request):
+    vendor = request.user.vendor_profile
+    order_items = OrderItem.objects.filter(product__vendor=vendor).select_related('order', 'product')
+
+    return render(request, 'userprofile/order_list.html', {
+        'order_items': order_items
+    })
+
+@login_required
+def order_detail(request, pk):
+    order = get_object_or_404(Order, pk=pk)
+
+    return render(request, 'userprofile/order_detail.html', {
+        'order':order
+    })
+

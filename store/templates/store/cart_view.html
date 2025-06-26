@@ -1,23 +1,42 @@
 {% extends 'core/base.html' %}
+{% load humanize %}
 
-{% block title %}  {% endblock title %}
+{% block title %}Your Cart{% endblock title %}
 
 {% block body %}
-   {% if cart|length %}
-      {% for item in cart %}
-         <img src="{{ item.product.get_thumbnail }}">
-         <p>Title: {{ item.product.title }}</p>
-         <p>&#8358;{{ item.product.display_price }}</p>
-         <p>Quantity: {{ item.quantity }}</p>
-         <div class="row gx-4 gx-lg-5 row-cols-2 row-cols-md-3 row-cols-xl-4 justify-content-center">
-            <p><a class="btn btn-primary" href="{% url 'change_quantity' item.product.id %}?action=increase">+</a></p>
-            <p><a class="btn btn-warning" href="{% url 'change_quantity' item.product.id %}?action=decrease">-</a></p>
-            <p><a class="btn btn-danger" href="{% url 'remove_from_cart' item.product.id %}">Remove</a></p>
-         </div>
-      {% endfor %}
-         <p>Total cost: {{ cart.get_total_cost }}</p>
-         <p><a class="btn btn-success" href="{% url 'checkout' %}">Checkout</a></p>
-   {% else %}
-      You dont have any items in your cart...
-   {% endif %}
+<div class="container py-5">
+    <h2 class="mb-4">Shopping Cart</h2>
+
+    {% if cart|length %}
+        <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+            {% for item in cart %}
+                <div class="col">
+                    <div class="card shadow-sm h-100">
+                        <img src="{{ item.product.get_thumbnail }}" class="card-img-top" alt="{{ item.product.title }}">
+                        <div class="card-body">
+                            <h5 class="card-title">{{ item.product.title }}</h5>
+                            <p class="card-text">Price: &#8358;{{ item.product.display_price|intcomma }}</p>
+                            <p class="card-text">Quantity: {{ item.quantity }}</p>
+
+                            <div class="d-flex justify-content-between">
+                                <a class="btn btn-sm btn-outline-primary" href="{% url 'change_quantity' item.product.id %}?action=increase">+</a>
+                                <a class="btn btn-sm btn-outline-warning" href="{% url 'change_quantity' item.product.id %}?action=decrease">-</a>
+                                <a class="btn btn-sm btn-outline-danger" href="{% url 'remove_from_cart' item.product.id %}">Remove</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+
+        <div class="mt-5 p-4 bg-light rounded shadow-sm">
+            <h4>Total Cost: <strong>&#8358;{{ cart.get_total_cost|intcomma }}</strong></h4>
+            <a href="{% url 'checkout' %}" class="btn btn-success btn-lg mt-3">Proceed to Checkout</a>
+        </div>
+    {% else %}
+        <div class="alert alert-info mt-5" role="alert">
+            You don’t have any items in your cart...
+        </div>
+    {% endif %}
+</div>
 {% endblock body %}
