@@ -19,9 +19,14 @@
                             <p class="card-text">Quantity: {{ item.quantity }}</p>
 
                             <div class="d-flex justify-content-between">
-                                <a class="btn btn-sm btn-outline-primary" href="{% url 'change_quantity' item.product.id %}?action=increase">+</a>
-                                <a class="btn btn-sm btn-outline-warning" href="{% url 'change_quantity' item.product.id %}?action=decrease">-</a>
-                                <a class="btn btn-sm btn-outline-danger" href="{% url 'remove_from_cart' item.product.id %}">Remove</a>
+                            <!-- Quantity Increase -->
+                            <button class="btn btn-sm btn-outline-primary" onclick="modifyCart('change', '{{ item.product.id }}', 'increase')">+</button>
+
+                            <!-- Quantity Decrease -->
+                            <button class="btn btn-sm btn-outline-warning" onclick="modifyCart('change', '{{ item.product.id }}', 'decrease')">-</button>
+
+                            <!-- Remove Product -->
+                            <button class="btn btn-sm btn-outline-danger" onclick="modifyCart('remove', '{{ item.product.id }}')">Remove</button>
                             </div>
                         </div>
                     </div>

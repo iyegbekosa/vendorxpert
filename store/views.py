@@ -99,18 +99,18 @@ def review_disapprove(request, pk):
     return redirect('product_detail', category_slug=review.product.category.slug, slug=review.product.slug)
 
 
-def add_to_cart(request, product_id):
-    cart = Cart(request)
-    cart.add(product_id)
+# def add_to_cart(request, product_id):
+#     cart = Cart(request)
+#     cart.add(product_id)
 
-    return redirect('frontpage')
+#     return redirect('frontpage')
 
 
-def remove_from_cart(request, product_id):
-    cart = Cart(request)
-    cart.remove(product_id)
+# def remove_from_cart(request, product_id):
+#     cart = Cart(request)
+#     cart.remove(product_id)
 
-    return redirect('cart_view')
+#     return redirect('cart_view')
 
 
 def cart_view(request):
@@ -121,18 +121,18 @@ def cart_view(request):
     })
 
 
-def change_quantity(request, product_id):
-    action = request.GET.get('action','')
-    if action:
-        quantity = 1
+# def change_quantity(request, product_id):
+#     action = request.GET.get('action','')
+#     if action:
+#         quantity = 1
 
-        if action == 'decrease':
-            quantity = -1
+#         if action == 'decrease':
+#             quantity = -1
         
-        cart = Cart(request)
-        cart.add(product_id, quantity, True)
+#         cart = Cart(request)
+#         cart.add(product_id, quantity, True)
     
-    return redirect('cart_view')
+#     return redirect('cart_view')
 
 
 def generate_fake_categories(request):
@@ -430,3 +430,52 @@ def receipt(request):
         'payment': payment,
         'order_items': order_items,
     })
+
+
+@csrf_exempt
+def api_add_to_cart(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        product_id = data.get('product_id')
+
+        if product_id:
+            cart = Cart(request)
+            cart.add(product_id)
+            return JsonResponse({
+                'success': True,
+                'cart_total_items': len(cart),
+                'cart_count': len(cart)
+            })
+    return JsonResponse({'success': False}, status=400)
+
+@csrf_exempt
+def api_remove_from_cart(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        product_id = data.get('product_id')
+
+        if product_id:
+            cart = Cart(request)
+            cart.remove(product_id)
+            return JsonResponse({'success': True, 'message': 'Item removed', 'cart_count': len(cart)})
+    return JsonResponse({'success': False}, status=400)
+
+
+@csrf_exempt
+def api_change_quantity(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        product_id = data.get('product_id')
+        action = data.get('action')
+
+        if product_id and action:
+            cart = Cart(request)
+            quantity = 1 if action == 'increase' else -1
+            cart.add(product_id, quantity, update_quantity=True)
+
+            return JsonResponse({
+                'success': True,
+                'message': f'{action.title()}d item',
+                'cart_count': len(cart)
+            })
+    return JsonResponse({'success': False}, status=400)
