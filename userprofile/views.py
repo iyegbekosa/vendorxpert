@@ -27,11 +27,6 @@ def activate_vendor(request):
 
 
 @vendor_required
-def vendor_dashboard(request):
-    return render(request, 'userprofile/vendor_dashboard.html')
-
-
-@vendor_required
 def my_store(request):
     vendor_profile = request.user.vendor_profile
     product = Product.objects.filter(vendor=vendor_profile).exclude(status=Product.DELETED)

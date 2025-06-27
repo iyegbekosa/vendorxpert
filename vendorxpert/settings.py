@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'store',
     'phonenumber_field',
     'django.contrib.humanize',
+    'rest_framework',
 ]
 
 MIDDLEWARE = [
@@ -159,4 +160,10 @@ STORAGES = {
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
+}
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    )
 }

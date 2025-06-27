@@ -5,14 +5,11 @@ from .forms import ContactForm
 
 
 def frontpage(request):
-    # product =  Product.objects.filter(status=Product.ACTIVE, stock=Product.IN_STOCK)[0:6]
     product = Product.objects.all()
     sponsored = Product.objects.filter(featured=True)
-    # review = Review.objects.filter(approved=True)
     return render(request, 'core/frontpage.html', {
         'product':product,
         'sponsored':sponsored,
-        # 'review':review,
     })
 
 

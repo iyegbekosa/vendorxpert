@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views
+from . import views, api_views
 
 urlpatterns = [
     path('add_to_cart', views.api_add_to_cart, name='add_to_cart'),
@@ -16,4 +16,19 @@ urlpatterns = [
 
     path('<slug:category_slug>/<slug:slug>/', views.product_detail, name='product_detail'),
     path('<slug:slug>/', views.category_detail, name='category_detail'),
+]
+
+urlpatterns += [
+    path('api/product/<slug:category_slug>/<slug:slug>/', api_views.product_detail_api, name='product_detail_api'),
+    path('api/category/<slug:slug>/', api_views.category_detail_api, name='category_detail_api'),
+    path('api/search/', api_views.search_api, name='search_api'),
+    path('api/add-review/<int:pk>/', api_views.add_review_api, name='add_review_api'),
+    path('api/delete-review/<int:review_id>/', api_views.delete_review_api, name='delete_review_api'),
+    path('api/cart/', api_views.cart_view_api, name='cart_view_api'),
+    path('api/add_to_cart', api_views.api_add_to_cart, name='add_to_cart'),
+    path('api/remove_from_cart', api_views.api_remove_from_cart, name='remove_from_cart'),
+    path('api/change_quantity', api_views.api_change_quantity, name='change_quantity'),
+    path('api/checkout', api_views.checkout_api, name='checkout'),
+    path('api/paystack/callback/', api_views.paystack_callback_api, name='paystack_callback_api'),
+    path('api/paystack_webhook', api_views.paystack_webhook_api, name='paystack_webhook'),
 ]
