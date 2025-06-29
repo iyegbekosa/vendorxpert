@@ -14,8 +14,8 @@ urlpatterns = [
     path('paystack_callback/', views.paystack_callback, name='paystack_callback'),
     path('paystack_webhook/', views.paystack_webhook, name='paystack_webhook'),
 
-    path('<slug:category_slug>/<slug:slug>/', views.product_detail, name='product_detail'),
-    path('<slug:slug>/', views.category_detail, name='category_detail'),
+    path('store/<slug:category_slug>/<slug:slug>/', views.product_detail, name='product_detail'),
+    path('store/<slug:slug>/', views.category_detail, name='category_detail'),
 ]
 
 urlpatterns += [
