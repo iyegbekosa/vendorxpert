@@ -32,7 +32,7 @@ def product_detail_api(request, category_slug, slug):
 @api_view(['GET'])
 def category_detail_api(request, slug):
     category = get_object_or_404(Category, slug=slug)
-    products = category.product.filter(status=Product.ACTIVE, stock=Product.IN_STOCK)
+    products = category.product.filter(status=Product.ACTIVE, stock=Product.IN_STOCK, vendor__subscription_status__in=['active', 'grace'])
 
     paginator = StandardResultsPagination()
     result_page = paginator.paginate_queryset(products, request)
@@ -47,7 +47,8 @@ def search_api(request):
 
     products = Product.objects.filter(
         status=Product.ACTIVE,
-        stock=Product.IN_STOCK
+        stock=Product.IN_STOCK,
+        vendor__subscription_status__in=['active', 'grace']
     ).filter(
         Q(title__icontains=query) | Q(description__icontains=query)
     )
@@ -275,9 +276,8 @@ def checkout_api(request):
     return Response(serializer.errors, status=400)
 
 
-# in api_views.py
 @api_view(['GET'])
-@permission_classes([AllowAny])  # Paystack server won’t send credentials
+@permission_classes([AllowAny])
 def paystack_callback_api(request):
     ref = request.GET.get('reference')
     if not ref:

@@ -1,7 +1,7 @@
 import requests
 from django.conf import settings
 
-def create_paystack_subaccount(vendor):
+def create_paystack_subaccount(vendor, account_number, bank_code):
     url = "https://api.paystack.co/subaccount"
     headers = {
         "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
@@ -10,9 +10,9 @@ def create_paystack_subaccount(vendor):
 
     payload = {
         "business_name": vendor.store_name,
-        "settlement_bank": vendor.bank_code,
-        "account_number": vendor.account_number,
-        "percentage_charge": 5.0,  # or however much you retain
+        "settlement_bank": bank_code,
+        "account_number": account_number,
+        "percentage_charge": 5.0,  # adjust as needed
     }
 
     response = requests.post(url, json=payload, headers=headers)

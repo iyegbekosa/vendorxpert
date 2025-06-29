@@ -26,4 +26,8 @@ urlpatterns += [
     path('api/my-order/', api_views.vendor_order_list_api, name='my_order_api'),
     path('api/order/<int:pk>/', api_views.order_detail_api, name='order_detail_api'),
     path('api/toggle-fulfillment/<int:pk>/', api_views.toggle_fulfillment_api, name='toggle_fulfillment_api'),
+    path('api/resubscribe/', api_views.resubscribe_api, name='resubscribe_api'),
+    path('api/cancel_subscription/', api_views.cancel_subscription_api, name='cancel_subscription_api'),
+    path('api/paystack_subscription_webhook', api_views.paystack_webhook, name='paystack_subscription_webhook'),
+
 ] 

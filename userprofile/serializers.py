@@ -4,6 +4,10 @@ from .models import UserProfile, VendorProfile
 from store.serializers import Product, ProductSerializer
 from store.models import OrderItem, Order
 from django.utils.text import slugify
+from datetime import timedelta, timezone
+from store.utils import create_paystack_subaccount
+
+
 
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
@@ -22,7 +26,6 @@ class SignupSerializer(serializers.ModelSerializer):
         return user
 
 
-
 class VendorRegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = VendorProfile
@@ -30,12 +33,19 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context['request']
+        account_number = validated_data.pop('account_number')
+        bank_code = validated_data.pop('bank_code')
+
         vendor = VendorProfile.objects.create(
             user=request.user,
+            subscription_expiry=timezone.now() + timedelta(days=30),
             **validated_data
         )
+
+        create_paystack_subaccount(vendor, account_number, bank_code)
+
         return vendor
-    
+
 class VendorProfileSerializer(serializers.ModelSerializer):
     products = serializers.SerializerMethodField()
 
@@ -44,7 +54,7 @@ class VendorProfileSerializer(serializers.ModelSerializer):
         fields = ['id', 'store_name', 'account_number', 'bank_code', 'products']
 
     def get_products(self, obj):
-        products = Product.objects.filter(vendor=obj, status=Product.ACTIVE, stock=Product.IN_STOCK)
+        products = Product.objects.filter(vendor=obj, status=Product.ACTIVE, stock=Product.IN_STOCK, vendor__subscription_status__in=['active', 'grace'])
         return ProductSerializer(products, many=True).data
 
 
