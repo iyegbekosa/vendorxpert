@@ -51,7 +51,7 @@ class VendorProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = VendorProfile
-        fields = ['id', 'store_name', 'account_number', 'bank_code', 'products']
+        fields = ['id', 'store_name', 'products']
 
     def get_products(self, obj):
         products = Product.objects.filter(vendor=obj, status=Product.ACTIVE, stock=Product.IN_STOCK, vendor__subscription_status__in=['active', 'grace'])
