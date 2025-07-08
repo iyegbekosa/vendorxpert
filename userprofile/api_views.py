@@ -2,7 +2,16 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import login
-from .serializers import SignupSerializer, VendorRegisterSerializer, VendorProfileSerializer, Product, ProductSerializer, ProductCreateSerializer, VendorOrderDetailSerializer, VendorOrderItemSerializer
+from .serializers import (
+    SignupSerializer,
+    VendorRegisterSerializer,
+    VendorProfileSerializer,
+    Product,
+    ProductSerializer,
+    ProductCreateSerializer,
+    VendorOrderDetailSerializer,
+    VendorOrderItemSerializer,
+)
 from .models import VendorProfile, VendorPlan
 from store.utils import create_paystack_subaccount
 from django.db import transaction
@@ -23,116 +32,161 @@ import hashlib
 import logging
 from django.views.decorators.csrf import csrf_exempt
 from django.http import HttpResponse
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
 
 
-
-
-@api_view(['POST'])
+@swagger_auto_schema(
+    method="post",
+    operation_description="Register a new user account",
+    request_body=SignupSerializer,
+    responses={
+        201: openapi.Response(
+            description="User successfully created",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "user_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Validation errors"),
+    },
+    tags=["Authentication"],
+)
+@api_view(["POST"])
 def signup_api(request):
+    """
+    Register a new user account.
+
+    Creates a new user account and automatically logs them in.
+    """
     serializer = SignupSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
         login(request, user)
-        return Response({'success': True, 'user_id': user.id}, status=status.HTTP_201_CREATED)
-    
+        return Response(
+            {"success": True, "user_id": user.id}, status=status.HTTP_201_CREATED
+        )
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def register_vendor_api(request):
-    serializer = VendorRegisterSerializer(data=request.data, context={'request': request})
+    serializer = VendorRegisterSerializer(
+        data=request.data, context={"request": request}
+    )
 
     if serializer.is_valid():
         vendor = serializer.save()
-        return Response({'success': True, 'vendor_id': vendor.id}, status=status.HTTP_201_CREATED)
-    
+        return Response(
+            {"success": True, "vendor_id": vendor.id}, status=status.HTTP_201_CREATED
+        )
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 def vendor_detail_api(request, pk):
     try:
         vendor = VendorProfile.objects.get(pk=pk)
     except VendorProfile.DoesNotExist:
-        return Response({'error': 'Vendor not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"error": "Vendor not found"}, status=status.HTTP_404_NOT_FOUND)
 
     serializer = VendorProfileSerializer(vendor)
     return Response(serializer.data)
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 @permission_classes([IsAuthenticated, VendorFeatureAccess])
 def my_store_api(request):
     try:
         vendor_profile = request.user.vendor_profile
     except AttributeError:
-        return Response({'error': 'User is not a vendor.'}, status=403)
+        return Response({"error": "User is not a vendor."}, status=403)
 
-    products = Product.objects.filter(vendor=vendor_profile).exclude(status=Product.DELETED)
+    products = Product.objects.filter(vendor=vendor_profile).exclude(
+        status=Product.DELETED
+    )
 
     paginator = StandardResultsPagination()
     result_page = paginator.paginate_queryset(products, request)
-
 
     serializer = ProductSerializer(result_page, many=True)
     return paginator.get_paginated_response(serializer.data)
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated, HasActiveSubscription, VendorFeatureAccess])
 @parser_classes([MultiPartParser, FormParser])
 def add_product_api(request):
     if not can_create_product(request.user):
-        return Response({'detail': 'Product limit reached for your plan.'}, status=403)
+        return Response({"detail": "Product limit reached for your plan."}, status=403)
     serializer = ProductCreateSerializer(data=request.data)
     if serializer.is_valid():
         product = serializer.save(vendor=request.user.vendor_profile)
-        return Response({'success': True, 'product_id': product.id})
+        return Response({"success": True, "product_id": product.id})
     return Response(serializer.errors, status=400)
 
 
-@api_view(['PUT'])
+@api_view(["PUT"])
 @permission_classes([IsAuthenticated, HasActiveSubscription, VendorFeatureAccess])
 @parser_classes([MultiPartParser, FormParser])
 def edit_product_api(request, pk):
     try:
         product = Product.objects.get(pk=pk, vendor=request.user.vendor_profile)
     except Product.DoesNotExist:
-        return Response({'error': 'Product not found or unauthorized'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"error": "Product not found or unauthorized"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
     serializer = ProductCreateSerializer(product, data=request.data, partial=True)
     if serializer.is_valid():
         serializer.save()
-        return Response({'success': True, 'message': 'Product updated successfully'})
-    
+        return Response({"success": True, "message": "Product updated successfully"})
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-@api_view(['DELETE'])
+@api_view(["DELETE"])
 @permission_classes([IsAuthenticated, HasActiveSubscription, VendorFeatureAccess])
 def delete_product_api(request, pk):
     try:
         product = Product.objects.get(pk=pk, vendor=request.user.vendor_profile)
     except Product.DoesNotExist:
-        return Response({'error': 'Product not found or unauthorized'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"error": "Product not found or unauthorized"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
     product.status = Product.DELETED
     product.save()
-    return Response({'success': True, 'message': f'{product.title} was deleted successfully'}, status=status.HTTP_200_OK)
+    return Response(
+        {"success": True, "message": f"{product.title} was deleted successfully"},
+        status=status.HTTP_200_OK,
+    )
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 @permission_classes([IsAuthenticated, VendorFeatureAccess])
 def vendor_order_list_api(request):
-    if not hasattr(request.user, 'vendor_profile'):
-        return Response({'detail': 'Only vendors can access this endpoint.'}, status=status.HTTP_403_FORBIDDEN)
+    if not hasattr(request.user, "vendor_profile"):
+        return Response(
+            {"detail": "Only vendors can access this endpoint."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     vendor = request.user.vendor_profile
-    order_items = OrderItem.objects.filter(
-        product__vendor=vendor
-    ).select_related('order', 'product').order_by('-order__created_at')
+    order_items = (
+        OrderItem.objects.filter(product__vendor=vendor)
+        .select_related("order", "product")
+        .order_by("-order__created_at")
+    )
 
     paginator = StandardResultsPagination()
     result_page = paginator.paginate_queryset(order_items, request)
@@ -141,49 +195,60 @@ def vendor_order_list_api(request):
     return paginator.get_paginated_response(serializer.data)
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 @permission_classes([IsAuthenticated, VendorFeatureAccess])
 def order_detail_api(request, pk):
     order = get_object_or_404(Order, pk=pk)
 
-    if not hasattr(request.user, 'vendor_profile'):
-        return Response({'detail': 'Only vendors can access this view.'}, status=status.HTTP_403_FORBIDDEN)
+    if not hasattr(request.user, "vendor_profile"):
+        return Response(
+            {"detail": "Only vendors can access this view."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     vendor = request.user.vendor_profile
 
     if not order.items.filter(product__vendor=vendor).exists():
-        return Response({'detail': 'You are not authorized to view this order.'}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {"detail": "You are not authorized to view this order."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     vendor_items = order.items.filter(product__vendor=vendor)
 
-    serializer = VendorOrderDetailSerializer({
-        'order': order,
-        'items': vendor_items
-    })
+    serializer = VendorOrderDetailSerializer({"order": order, "items": vendor_items})
 
     return Response(serializer.data)
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated, VendorFeatureAccess])
 def toggle_fulfillment_api(request, pk):
     try:
         order_item = OrderItem.objects.get(
-            pk=pk,
-            product__vendor=request.user.vendor_profile
+            pk=pk, product__vendor=request.user.vendor_profile
         )
     except OrderItem.DoesNotExist:
-        return Response({'detail': 'Order item not found or unauthorized.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"detail": "Order item not found or unauthorized."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
     if order_item.order.is_paid:
         order_item.fulfilled = not order_item.fulfilled
         order_item.save()
-        return Response({'success': True, 'fulfilled': order_item.fulfilled}, status=status.HTTP_200_OK)
+        return Response(
+            {"success": True, "fulfilled": order_item.fulfilled},
+            status=status.HTTP_200_OK,
+        )
 
-    return Response({'success': False, 'message': 'Order not paid.'}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(
+        {"success": False, "message": "Order not paid."},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def resubscribe_api(request):
     user = request.user
@@ -204,11 +269,15 @@ def resubscribe_api(request):
         return Response({"error": "Invalid or inactive plan."}, status=404)
 
     if not selected_plan.paystack_plan_code:
-        return Response({"error": "Selected plan is not linked to Paystack."}, status=400)
+        return Response(
+            {"error": "Selected plan is not linked to Paystack."}, status=400
+        )
 
-    ref = str(uuid.uuid4()).replace('-', '')[:20]
+    ref = str(uuid.uuid4()).replace("-", "")[:20]
 
-    callback_url = f"{request.scheme}://{request.get_host()}{reverse('paystack_callback')}"
+    callback_url = (
+        f"{request.scheme}://{request.get_host()}{reverse('paystack_callback')}"
+    )
 
     payload = {
         "email": user.email,
@@ -219,10 +288,12 @@ def resubscribe_api(request):
 
     headers = {
         "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
-    response = requests.post("https://api.paystack.co/transaction/initialize", json=payload, headers=headers)
+    response = requests.post(
+        "https://api.paystack.co/transaction/initialize", json=payload, headers=headers
+    )
 
     try:
         res_data = response.json()
@@ -230,20 +301,25 @@ def resubscribe_api(request):
         return Response({"error": "Invalid response from Paystack"}, status=502)
 
     if response.status_code == 200 and res_data.get("status"):
-        vendor.pending_ref = ref  
+        vendor.pending_ref = ref
         vendor.plan = selected_plan
         vendor.save()
 
-        return Response({
-            "authorization_url": res_data["data"]["authorization_url"],
-            "access_code": res_data["data"]["access_code"],
-            "reference": res_data["data"]["reference"]
-        }, status=200)
+        return Response(
+            {
+                "authorization_url": res_data["data"]["authorization_url"],
+                "access_code": res_data["data"]["access_code"],
+                "reference": res_data["data"]["reference"],
+            },
+            status=200,
+        )
     else:
-        return Response({"error": res_data.get("message", "Paystack error")}, status=400)
+        return Response(
+            {"error": res_data.get("message", "Paystack error")}, status=400
+        )
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def cancel_subscription_api(request):
     user = request.user
@@ -253,46 +329,43 @@ def cancel_subscription_api(request):
     except VendorProfile.DoesNotExist:
         return Response({"error": "User is not a vendor."}, status=403)
 
-    if vendor.subscription_status == 'cancelled':
+    if vendor.subscription_status == "cancelled":
         return Response({"message": "Subscription already cancelled."}, status=400)
 
-    subscription_code = getattr(vendor, 'paystack_subscription_code', None)
+    subscription_code = getattr(vendor, "paystack_subscription_code", None)
     if subscription_code:
         url = f"https://api.paystack.co/subscription/disable"
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
-        payload = {
-            "code": subscription_code,
-            "token": vendor.user.email
-        }
+        payload = {"code": subscription_code, "token": vendor.user.email}
 
         res = requests.post(url, json=payload, headers=headers)
         if res.status_code != 200:
-            return Response({"error": "Failed to cancel subscription on Paystack"}, status=502)
+            return Response(
+                {"error": "Failed to cancel subscription on Paystack"}, status=502
+            )
 
     # Update vendor status
-    vendor.subscription_status = 'cancelled'
+    vendor.subscription_status = "cancelled"
     vendor.save()
 
     return Response({"message": "Subscription cancelled successfully."}, status=200)
 
 
-
 logger = logging.getLogger(__name__)
+
 
 @csrf_exempt
 def paystack_webhook(request):
-    signature = request.headers.get('x-paystack-signature')
+    signature = request.headers.get("x-paystack-signature")
     if not signature:
         return HttpResponse(status=400)
 
     payload = request.body
     computed_hash = hmac.new(
-        settings.PAYSTACK_SECRET_KEY.encode(),
-        payload,
-        hashlib.sha512
+        settings.PAYSTACK_SECRET_KEY.encode(), payload, hashlib.sha512
     ).hexdigest()
 
     if not hmac.compare_digest(computed_hash, signature):
@@ -300,16 +373,16 @@ def paystack_webhook(request):
         return HttpResponse(status=401)
 
     try:
-        event_data = json.loads(payload.decode('utf-8'))
+        event_data = json.loads(payload.decode("utf-8"))
     except Exception as e:
         logger.error(f"Webhook JSON error: {e}")
         return HttpResponse(status=400)
 
-    event = event_data.get('event')
+    event = event_data.get("event")
 
-    if event in ['charge.success', 'invoice.payment_success']:
-        reference = event_data.get('data', {}).get('reference')
-        subscription_code = event_data.get('data', {}).get('subscription')
+    if event in ["charge.success", "invoice.payment_success"]:
+        reference = event_data.get("data", {}).get("reference")
+        subscription_code = event_data.get("data", {}).get("subscription")
 
         if not reference:
             logger.warning("Missing reference in webhook.")
@@ -323,20 +396,26 @@ def paystack_webhook(request):
 
         now = timezone.now()
         if vendor.subscription_expiry and vendor.subscription_expiry > now:
-            logger.info(f"Subscription for vendor {vendor.id} already active, skipping.")
+            logger.info(
+                f"Subscription for vendor {vendor.id} already active, skipping."
+            )
             return HttpResponse(status=200)
 
         if not subscription_code:
-            logger.warning(f"Subscription code missing in webhook for vendor {vendor.id}")
+            logger.warning(
+                f"Subscription code missing in webhook for vendor {vendor.id}"
+            )
             return HttpResponse(status=400)
 
         vendor.paystack_subscription_code = subscription_code
-        vendor.subscription_status = 'active'
+        vendor.subscription_status = "active"
         vendor.subscription_expiry = now + timezone.timedelta(days=30)
         vendor.last_payment_date = now
         vendor.pending_ref = None
         vendor.save()
 
-        logger.info(f"Subscription updated for vendor: {vendor.id} | New expiry: {vendor.subscription_expiry}")
+        logger.info(
+            f"Subscription updated for vendor: {vendor.id} | New expiry: {vendor.subscription_expiry}"
+        )
 
     return HttpResponse(status=200)

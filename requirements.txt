@@ -5,6 +5,7 @@ Django==4.2
 django-phonenumber-field==8.1.0
 djangorestframework==3.16.0
 djangorestframework_simplejwt==5.5.0
+drf-yasg==1.21.8
 Faker==35.2.0
 idna==3.10
 phonenumbers==9.0.8
