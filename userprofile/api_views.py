@@ -6,6 +6,7 @@ from .serializers import (
     SignupSerializer,
     VendorRegisterSerializer,
     VendorProfileSerializer,
+    VendorListSerializer,
     Product,
     ProductSerializer,
     ProductCreateSerializer,
@@ -24,7 +25,8 @@ from .permissions import can_create_product, HasActiveSubscription, VendorFeatur
 import requests
 from django.conf import settings
 import uuid
-from datetime import timedelta, timezone
+from datetime import timedelta
+from django.utils import timezone
 from django.urls import reverse
 import json
 import hmac
@@ -39,6 +41,7 @@ from drf_yasg import openapi
 @swagger_auto_schema(
     method="post",
     operation_description="Register a new user account",
+    security=[],  # No authentication required
     request_body=SignupSerializer,
     responses={
         201: openapi.Response(
@@ -73,6 +76,95 @@ def signup_api(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+@swagger_auto_schema(
+    method="post",
+    operation_description="Login user and return authentication token",
+    security=[],  # No authentication required - this is how you GET tokens!
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["email", "password"],
+        properties={
+            "email": openapi.Schema(type=openapi.TYPE_STRING, description="User email"),
+            "password": openapi.Schema(
+                type=openapi.TYPE_STRING, description="User password"
+            ),
+        },
+    ),
+    responses={
+        200: openapi.Response(
+            description="Login successful",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "user_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "email": openapi.Schema(type=openapi.TYPE_STRING),
+                    "is_vendor": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "vendor_id": openapi.Schema(
+                        type=openapi.TYPE_INTEGER,
+                        description="Vendor ID (only present if is_vendor is true)",
+                    ),
+                    "refresh": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="JWT refresh token"
+                    ),
+                    "access": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="JWT access token"
+                    ),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid credentials"),
+    },
+    tags=["Authentication"],
+)
+@api_view(["POST"])
+def login_api(request):
+    """
+    Login user with email and password.
+
+    Authenticates user and returns user information with JWT tokens.
+    """
+    from django.contrib.auth import authenticate
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    email = request.data.get("email")
+    password = request.data.get("password")
+
+    if not email or not password:
+        return Response(
+            {"error": "Email and password are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user = authenticate(request, username=email, password=password)
+
+    if user is not None:
+        # Generate JWT tokens
+        refresh = RefreshToken.for_user(user)
+        access_token = refresh.access_token
+
+        is_vendor = hasattr(user, "vendor_profile")
+
+        response_data = {
+            "success": True,
+            "user_id": user.id,
+            "email": user.email,
+            "is_vendor": is_vendor,
+            "refresh": str(refresh),
+            "access": str(access_token),
+        }
+
+        # Include vendor ID if user is a vendor
+        if is_vendor:
+            response_data["vendor_id"] = user.vendor_profile.id
+
+        return Response(response_data, status=status.HTTP_200_OK)
+    else:
+        return Response(
+            {"error": "Invalid email or password"}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
@@ -101,6 +193,96 @@ def vendor_detail_api(request, pk):
     return Response(serializer.data)
 
 
+@swagger_auto_schema(
+    method="get",
+    operation_description="Get all vendor profiles with pagination",
+    security=[],  # Public endpoint - no authentication required
+    manual_parameters=[
+        openapi.Parameter(
+            "page",
+            openapi.IN_QUERY,
+            description="Page number",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+        openapi.Parameter(
+            "subscription_status",
+            openapi.IN_QUERY,
+            description="Filter by subscription status (active, expired, grace)",
+            type=openapi.TYPE_STRING,
+            required=False,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Paginated list of all vendor profiles",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "results": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                },
+            ),
+        )
+    },
+    tags=["Vendors"],
+)
+@api_view(["GET"])
+def vendors_list_api(request):
+    """
+    Get all vendor profiles with pagination and optional filtering.
+
+    Returns a paginated list of all vendor profiles.
+    Can be filtered by subscription status.
+    """
+    vendors = VendorProfile.objects.all()
+
+    # Filter by subscription status if provided
+    subscription_status = request.GET.get("subscription_status")
+    if subscription_status:
+        vendors = vendors.filter(subscription_status=subscription_status)
+
+    # Order by newest first
+    vendors = vendors.order_by("-id")
+
+    paginator = StandardResultsPagination()
+    result_page = paginator.paginate_queryset(vendors, request)
+
+    serializer = VendorListSerializer(result_page, many=True)
+
+    return paginator.get_paginated_response(serializer.data)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_description="Get vendor's own products (requires vendor authentication)",
+    security=[{"Bearer": []}],
+    responses={
+        200: openapi.Response(
+            description="Vendor's products retrieved successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "results": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                },
+            ),
+        ),
+        403: openapi.Response(description="User is not a vendor"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Vendor Products"],
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, VendorFeatureAccess])
 def my_store_api(request):
@@ -120,6 +302,90 @@ def my_store_api(request):
     return paginator.get_paginated_response(serializer.data)
 
 
+@swagger_auto_schema(
+    method="post",
+    operation_description="Add a new product to vendor's store",
+    security=[{"Bearer": []}],
+    manual_parameters=[
+        openapi.Parameter(
+            "title",
+            openapi.IN_FORM,
+            description="Product title/name",
+            type=openapi.TYPE_STRING,
+            required=True,
+        ),
+        openapi.Parameter(
+            "description",
+            openapi.IN_FORM,
+            description="Product description",
+            type=openapi.TYPE_STRING,
+            required=True,
+        ),
+        openapi.Parameter(
+            "price",
+            openapi.IN_FORM,
+            description="Product price in kobo/cents (e.g., 1000 = ₦10.00)",
+            type=openapi.TYPE_INTEGER,
+            required=True,
+        ),
+        openapi.Parameter(
+            "category",
+            openapi.IN_FORM,
+            description="Category ID (get from /api/categories/)",
+            type=openapi.TYPE_INTEGER,
+            required=True,
+        ),
+        openapi.Parameter(
+            "status",
+            openapi.IN_FORM,
+            description="Product status",
+            type=openapi.TYPE_STRING,
+            enum=["draft", "waiting approval", "active", "deleted"],
+            default="active",
+            required=False,
+        ),
+        openapi.Parameter(
+            "stock",
+            openapi.IN_FORM,
+            description="Stock status",
+            type=openapi.TYPE_STRING,
+            enum=["in stock", "out of stock"],
+            default="in stock",
+            required=False,
+        ),
+        openapi.Parameter(
+            "featured",
+            openapi.IN_FORM,
+            description="Whether product is featured",
+            type=openapi.TYPE_BOOLEAN,
+            default=False,
+            required=False,
+        ),
+        openapi.Parameter(
+            "product_image",
+            openapi.IN_FORM,
+            description="Product image file",
+            type=openapi.TYPE_FILE,
+            required=False,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Product successfully created",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "product_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Validation errors"),
+        403: openapi.Response(description="Product limit reached for your plan"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Vendor Products"],
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, HasActiveSubscription, VendorFeatureAccess])
 @parser_classes([MultiPartParser, FormParser])
@@ -133,6 +399,86 @@ def add_product_api(request):
     return Response(serializer.errors, status=400)
 
 
+@swagger_auto_schema(
+    method="put",
+    operation_description="Edit an existing product in vendor's store",
+    manual_parameters=[
+        openapi.Parameter(
+            "title",
+            openapi.IN_FORM,
+            description="Product title/name",
+            type=openapi.TYPE_STRING,
+            required=False,
+        ),
+        openapi.Parameter(
+            "description",
+            openapi.IN_FORM,
+            description="Product description",
+            type=openapi.TYPE_STRING,
+            required=False,
+        ),
+        openapi.Parameter(
+            "price",
+            openapi.IN_FORM,
+            description="Product price in kobo/cents (e.g., 1000 = ₦10.00)",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+        openapi.Parameter(
+            "category",
+            openapi.IN_FORM,
+            description="Category ID (get from /api/categories/)",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+        openapi.Parameter(
+            "status",
+            openapi.IN_FORM,
+            description="Product status",
+            type=openapi.TYPE_STRING,
+            enum=["draft", "waiting approval", "active", "deleted"],
+            required=False,
+        ),
+        openapi.Parameter(
+            "stock",
+            openapi.IN_FORM,
+            description="Stock status",
+            type=openapi.TYPE_STRING,
+            enum=["in stock", "out of stock"],
+            required=False,
+        ),
+        openapi.Parameter(
+            "featured",
+            openapi.IN_FORM,
+            description="Whether product is featured",
+            type=openapi.TYPE_BOOLEAN,
+            required=False,
+        ),
+        openapi.Parameter(
+            "product_image",
+            openapi.IN_FORM,
+            description="Product image file",
+            type=openapi.TYPE_FILE,
+            required=False,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Product successfully updated",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Validation errors"),
+        404: openapi.Response(description="Product not found or unauthorized"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Vendor Products"],
+)
 @api_view(["PUT"])
 @permission_classes([IsAuthenticated, HasActiveSubscription, VendorFeatureAccess])
 @parser_classes([MultiPartParser, FormParser])
@@ -246,6 +592,221 @@ def toggle_fulfillment_api(request, pk):
         {"success": False, "message": "Order not paid."},
         status=status.HTTP_400_BAD_REQUEST,
     )
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_description="Get all reviews for a vendor's products",
+    security=[{"Bearer": []}],  # Requires JWT authentication
+    manual_parameters=[
+        openapi.Parameter(
+            "page",
+            openapi.IN_QUERY,
+            description="Page number",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+        openapi.Parameter(
+            "rating",
+            openapi.IN_QUERY,
+            description="Filter by rating (1-5)",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Paginated list of reviews for vendor's products",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "results": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                },
+            ),
+        ),
+        401: openapi.Response(description="Authentication required"),
+        403: openapi.Response(description="Only vendors can access this endpoint"),
+    },
+    tags=["Vendors"],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, VendorFeatureAccess])
+def vendor_reviews_api(request):
+    """
+    Get all reviews for a vendor's products.
+
+    Returns a paginated list of all reviews for products belonging to the authenticated vendor.
+    Can be filtered by rating.
+    """
+    if not hasattr(request.user, "vendor_profile"):
+        return Response(
+            {"detail": "Only vendors can access this endpoint."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    vendor = request.user.vendor_profile
+
+    # Get all reviews for this vendor's products
+    from store.models import Review
+
+    reviews = (
+        Review.objects.filter(product__vendor=vendor)
+        .select_related("product", "author")
+        .order_by("-created_date")
+    )
+
+    # Filter by rating if provided
+    rating = request.GET.get("rating")
+    if rating:
+        try:
+            rating = int(rating)
+            if 1 <= rating <= 5:
+                reviews = reviews.filter(rating=rating)
+        except (ValueError, TypeError):
+            pass  # Invalid rating, ignore filter
+
+    paginator = StandardResultsPagination()
+    result_page = paginator.paginate_queryset(reviews, request)
+
+    # Create custom serialized data
+    serialized_reviews = []
+    if result_page is not None:
+        for review in result_page:
+            serialized_reviews.append(
+                {
+                    "id": review.id,
+                    "product": {
+                        "id": review.product.id,
+                        "title": review.product.title,
+                        "slug": review.product.slug,
+                    },
+                    "author": {
+                        "id": review.author.id,
+                        "name": review.author.user.get_full_name()
+                        or review.author.user.username,
+                    },
+                    "rating": review.rating,
+                    "text": review.text,
+                    "created_at": review.created_date,
+                }
+            )
+
+    return paginator.get_paginated_response(serialized_reviews)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_description="Get all reviews for a specific vendor's products (public)",
+    security=[],  # Public endpoint - no authentication required
+    manual_parameters=[
+        openapi.Parameter(
+            "vendor_id",
+            openapi.IN_PATH,
+            description="Vendor ID",
+            type=openapi.TYPE_INTEGER,
+        ),
+        openapi.Parameter(
+            "page",
+            openapi.IN_QUERY,
+            description="Page number",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+        openapi.Parameter(
+            "rating",
+            openapi.IN_QUERY,
+            description="Filter by rating (1-5)",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Paginated list of reviews for vendor's products",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "results": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                },
+            ),
+        ),
+        404: openapi.Response(description="Vendor not found"),
+    },
+    tags=["Vendors"],
+)
+@api_view(["GET"])
+def vendor_reviews_public_api(request, vendor_id):
+    """
+    Get all reviews for a specific vendor's products (public endpoint).
+
+    Returns a paginated list of all reviews for products belonging to the specified vendor.
+    This is a public endpoint that doesn't require authentication.
+    """
+    try:
+        vendor = VendorProfile.objects.get(id=vendor_id)
+    except VendorProfile.DoesNotExist:
+        return Response(
+            {"detail": "Vendor not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Get all reviews for this vendor's products
+    from store.models import Review
+
+    reviews = (
+        Review.objects.filter(product__vendor=vendor)
+        .select_related("product", "author")
+        .order_by("-created_date")
+    )
+
+    # Filter by rating if provided
+    rating = request.GET.get("rating")
+    if rating:
+        try:
+            rating = int(rating)
+            if 1 <= rating <= 5:
+                reviews = reviews.filter(rating=rating)
+        except (ValueError, TypeError):
+            pass  # Invalid rating, ignore filter
+
+    paginator = StandardResultsPagination()
+    result_page = paginator.paginate_queryset(reviews, request)
+
+    # Create custom serialized data
+    serialized_reviews = []
+    if result_page is not None:
+        for review in result_page:
+            serialized_reviews.append(
+                {
+                    "id": review.id,
+                    "product": {
+                        "id": review.product.id,
+                        "title": review.product.title,
+                        "slug": review.product.slug,
+                    },
+                    "author": {
+                        "name": review.author.user.get_full_name()
+                        or review.author.user.username,
+                    },
+                    "rating": review.rating,
+                    "text": review.text,
+                    "created_at": review.created_date,
+                }
+            )
+
+    return paginator.get_paginated_response(serialized_reviews)
 
 
 @api_view(["POST"])

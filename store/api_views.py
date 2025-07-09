@@ -31,6 +31,110 @@ logger = logging.getLogger(__name__)
 
 @swagger_auto_schema(
     method="get",
+    operation_description="Get all categories",
+    security=[],  # Public endpoint - no authentication required
+    responses={
+        200: openapi.Response(
+            description="List of all categories",
+            schema=openapi.Schema(
+                type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)
+            ),
+        )
+    },
+    tags=["Categories"],
+)
+@api_view(["GET"])
+def categories_list_api(request):
+    """
+    Get all categories.
+
+    Returns a list of all available categories in the system.
+    """
+    from store.serializers import CategorySerializer
+
+    categories = Category.objects.all()
+    serializer = CategorySerializer(categories, many=True)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_description="Get all products with pagination",
+    security=[],  # Public endpoint - no authentication required
+    manual_parameters=[
+        openapi.Parameter(
+            "page",
+            openapi.IN_QUERY,
+            description="Page number",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+        openapi.Parameter(
+            "ordering",
+            openapi.IN_QUERY,
+            description="Order by field (e.g., 'title', '-created_at', 'price')",
+            type=openapi.TYPE_STRING,
+            required=False,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Paginated list of all products",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "results": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                },
+            ),
+        )
+    },
+    tags=["Products"],
+)
+@api_view(["GET"])
+def products_list_api(request):
+    """
+    Get all products with pagination and optional ordering.
+
+    Returns a paginated list of all active products from vendors
+    with active subscriptions. Supports ordering by various fields.
+    """
+    products = Product.objects.filter(
+        status=Product.ACTIVE,
+        stock=Product.IN_STOCK,
+        vendor__subscription_status__in=["active", "grace"],
+    )
+
+    # Handle ordering
+    ordering = request.GET.get("ordering", "-id")  # Default to newest first
+    valid_orderings = [
+        "title",
+        "-title",
+        "price",
+        "-price",
+        "created_at",
+        "-created_at",
+        "id",
+        "-id",
+    ]
+    if ordering in valid_orderings:
+        products = products.order_by(ordering)
+
+    paginator = StandardResultsPagination()
+    result_page = paginator.paginate_queryset(products, request)
+
+    serializer = ProductSerializer(result_page, many=True)
+
+    return paginator.get_paginated_response(serializer.data)
+
+
+@swagger_auto_schema(
+    method="get",
     operation_description="Get detailed information about a specific product",
     manual_parameters=[
         openapi.Parameter(
