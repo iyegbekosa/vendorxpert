@@ -165,10 +165,37 @@ def login_api(request):
         )
 
 
+@swagger_auto_schema(
+    method="post",
+    operation_description="Register the authenticated user as a vendor",
+    operation_summary="Register as vendor",
+    request_body=VendorRegisterSerializer,
+    responses={
+        201: openapi.Response(
+            description="Vendor successfully registered",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "vendor_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Validation errors"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Vendor Management"],
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def register_vendor_api(request):
+    """
+    Register the authenticated user as a vendor.
+
+    Requires authentication. Creates a vendor profile for the current user
+    with store details and bank account information for payment processing.
+    """
     serializer = VendorRegisterSerializer(
         data=request.data, context={"request": request}
     )

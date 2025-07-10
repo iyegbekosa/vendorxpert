@@ -18,7 +18,7 @@ class SignupSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = UserProfile(
-            username=validated_data["user_name"], email=validated_data.get("email", "")
+            user_name=validated_data["user_name"], email=validated_data.get("email", "")
         )
         user.set_password(validated_data["password"])
         user.save()
@@ -26,6 +26,18 @@ class SignupSerializer(serializers.ModelSerializer):
 
 
 class VendorRegisterSerializer(serializers.ModelSerializer):
+    store_name = serializers.CharField(
+        max_length=255, help_text="The name of your store (required)"
+    )
+    account_number = serializers.CharField(
+        max_length=20,
+        help_text="Your bank account number for payment processing (required)",
+    )
+    bank_code = serializers.CharField(
+        max_length=10,
+        help_text="Your bank code (e.g., 044 for Access Bank, 058 for GTBank) (required)",
+    )
+
     class Meta:
         model = VendorProfile
         fields = ["store_name", "account_number", "bank_code"]
