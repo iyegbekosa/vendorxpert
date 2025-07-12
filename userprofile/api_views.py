@@ -178,11 +178,38 @@ def login_api(request):
                 properties={
                     "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
                     "vendor_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "store_name": openapi.Schema(type=openapi.TYPE_STRING),
+                    "subscription_expiry": openapi.Schema(
+                        type=openapi.TYPE_STRING, format="date-time"
+                    ),
+                    "subscription_status": openapi.Schema(type=openapi.TYPE_STRING),
+                    "warning": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        description="Warning message if payment setup is incomplete",
+                    ),
                 },
             ),
         ),
-        400: openapi.Response(description="Validation errors"),
+        400: openapi.Response(
+            description="Validation errors or user already registered as vendor",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "error": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
         401: openapi.Response(description="Authentication required"),
+        500: openapi.Response(
+            description="Internal server error",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "error": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
     },
     tags=["Vendor Management"],
 )
@@ -196,15 +223,56 @@ def register_vendor_api(request):
     Requires authentication. Creates a vendor profile for the current user
     with store details and bank account information for payment processing.
     """
+    # Check if user is already a vendor
+    if hasattr(request.user, "vendor_profile"):
+        return Response(
+            {"error": "User is already registered as a vendor"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     serializer = VendorRegisterSerializer(
         data=request.data, context={"request": request}
     )
 
     if serializer.is_valid():
-        vendor = serializer.save()
-        return Response(
-            {"success": True, "vendor_id": vendor.id}, status=status.HTTP_201_CREATED
-        )
+        try:
+            vendor = serializer.save()
+
+            # Prepare response data
+            response_data = {
+                "success": True,
+                "vendor_id": vendor.id,
+                "message": "Vendor account created successfully",
+                "store_name": vendor.store_name,
+                "subscription_expiry": (
+                    vendor.subscription_expiry.isoformat()
+                    if vendor.subscription_expiry
+                    else None
+                ),
+                "subscription_status": vendor.subscription_status,
+            }
+
+            # Add warning if Paystack setup might have failed
+            if not vendor.subaccount_code:
+                response_data["warning"] = (
+                    "Vendor account created but payment setup may be incomplete. Please contact support if needed."
+                )
+
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            # Log the error
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"Vendor registration failed for user {request.user.id}: {str(e)}"
+            )
+
+            return Response(
+                {"error": "Failed to create vendor account. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

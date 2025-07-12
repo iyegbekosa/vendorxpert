@@ -42,20 +42,155 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         model = VendorProfile
         fields = ["store_name", "account_number", "bank_code"]
 
+    def validate_account_number(self, value):
+        """
+        Validate account number format
+        """
+        # Remove any spaces or dashes
+        account_number = value.replace(" ", "").replace("-", "")
+
+        # Check if it's all digits
+        if not account_number.isdigit():
+            raise serializers.ValidationError("Account number must contain only digits")
+
+        # Check length (most Nigerian banks use 10 digits)
+        if len(account_number) != 10:
+            raise serializers.ValidationError(
+                "Account number must be exactly 10 digits"
+            )
+
+        return account_number
+
+    def validate_bank_code(self, value):
+        """
+        Validate bank code format
+        """
+        # Common Nigerian bank codes
+        valid_bank_codes = {
+            "044": "Access Bank",
+            "063": "Access Bank (Diamond)",
+            "050": "Ecobank",
+            "070": "Fidelity Bank",
+            "011": "First Bank",
+            "214": "First City Monument Bank",
+            "058": "Guaranty Trust Bank",
+            "030": "Heritage Bank",
+            "301": "Jaiz Bank",
+            "082": "Keystone Bank",
+            "076": "Polaris Bank",
+            "101": "Providus Bank",
+            "221": "Stanbic IBTC Bank",
+            "068": "Standard Chartered",
+            "232": "Sterling Bank",
+            "100": "SunTrust Bank",
+            "032": "Union Bank",
+            "033": "United Bank for Africa",
+            "215": "Unity Bank",
+            "035": "Wema Bank",
+            "057": "Zenith Bank",
+        }
+
+        if value not in valid_bank_codes:
+            raise serializers.ValidationError(
+                f"Invalid bank code. Supported banks: {', '.join([f'{code} ({name})' for code, name in valid_bank_codes.items()])}"
+            )
+
+        return value
+
+    def validate_store_name(self, value):
+        """
+        Validate store name
+        """
+        # Remove extra whitespace
+        store_name = value.strip()
+
+        # Check minimum length
+        if len(store_name) < 3:
+            raise serializers.ValidationError(
+                "Store name must be at least 3 characters long"
+            )
+
+        # Check for inappropriate characters (basic check)
+        if any(char in store_name for char in ["<", ">", "&", '"', "'"]):
+            raise serializers.ValidationError("Store name contains invalid characters")
+
+        return store_name
+        """
+        Validate that the user isn't already a vendor and other business rules
+        """
+        request = self.context["request"]
+
+        # Check if user is already a vendor
+        if hasattr(request.user, "vendor_profile"):
+            raise serializers.ValidationError("User is already registered as a vendor")
+
+        # You can add more validation here, such as:
+        # - Check if account number format is valid
+        # - Check if bank code exists in your supported banks
+        # - Validate store name uniqueness if needed
+
+        return data
+
     def create(self, validated_data):
         request = self.context["request"]
         account_number = validated_data.pop("account_number")
         bank_code = validated_data.pop("bank_code")
 
-        vendor = VendorProfile.objects.create(
-            user=request.user,
-            subscription_expiry=timezone.now() + timedelta(days=30),
-            **validated_data,
-        )
+        try:
+            # Step 1: Get or create a default plan for new vendors
+            default_plan = None
+            try:
+                default_plan = VendorPlan.objects.get(
+                    name=VendorPlan.BASIC, is_active=True
+                )
+            except VendorPlan.DoesNotExist:
+                # If no basic plan exists, create one or use any active plan
+                default_plan = VendorPlan.objects.filter(is_active=True).first()
 
-        create_paystack_subaccount(vendor, account_number, bank_code)
+            # Step 2: Create the vendor profile first (safer approach)
+            vendor_data = {
+                "user": request.user,
+                "subscription_expiry": timezone.now() + timedelta(days=30),
+                "plan": default_plan,
+                "subscription_status": "active",
+                **validated_data,
+            }
 
-        return vendor
+            # Set default store description if not provided
+            if not validated_data.get("store_description"):
+                vendor_data["store_description"] = (
+                    f"Welcome to {validated_data.get('store_name', 'our store')}! We offer quality products and excellent service."
+                )
+
+            vendor = VendorProfile.objects.create(**vendor_data)
+
+            # Step 3: Create Paystack subaccount and link it to the vendor
+            try:
+                create_paystack_subaccount(vendor, account_number, bank_code)
+            except Exception as paystack_error:
+                # If Paystack fails, we still have the vendor but log the error
+                # The vendor can retry linking their account later
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.error(
+                    f"Failed to create Paystack subaccount for vendor {vendor.id}: {paystack_error}"
+                )
+
+                # You could also set a flag to indicate incomplete setup
+                # vendor.paystack_setup_complete = False
+                # vendor.save()
+
+                # Don't raise the error - let the vendor registration succeed
+                pass
+
+            return vendor
+
+        except Exception as e:
+            # If vendor creation fails, nothing to clean up
+            raise serializers.ValidationError(
+                f"Failed to create vendor account: {str(e)}"
+            )
 
 
 class VendorProfileSerializer(serializers.ModelSerializer):
@@ -80,7 +215,14 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         model = Product
         exclude = ["vendor", "slug", "created_at", "updated_at"]
 
+    def create(self, validated_data):
+        # Auto-generate slug from title when creating a new product
+        if "title" in validated_data:
+            validated_data["slug"] = slugify(validated_data["title"])
+        return super().create(validated_data)
+
     def update(self, instance, validated_data):
+        # Auto-generate slug from title when updating product title
         if "title" in validated_data:
             validated_data["slug"] = slugify(validated_data["title"])
         return super().update(instance, validated_data)

@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.db.models import Avg
 from phonenumber_field.modelfields import PhoneNumberField
 from django.conf import settings
+from django.utils.text import slugify
 
 
 class Category(models.Model):
@@ -101,6 +102,12 @@ class Product(models.Model):
             Avg("rating")
         )["rating__avg"]
         return round(avg_rating, 1) if avg_rating is not None else 0
+
+    def save(self, *args, **kwargs):
+        # Auto-generate slug from title if not provided
+        if not self.slug and self.title:
+            self.slug = slugify(self.title)
+        super().save(*args, **kwargs)
 
 
 class Review(models.Model):

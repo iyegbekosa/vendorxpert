@@ -47,6 +47,11 @@ urlpatterns += [
         "api/remove_from_cart/", api_views.api_remove_from_cart, name="remove_from_cart"
     ),
     path("api/change_quantity/", api_views.api_change_quantity, name="change_quantity"),
+    path(
+        "api/clear_cart/",
+        api_views.clear_cart_after_payment_api,
+        name="clear_cart_after_payment_api",
+    ),
     path("api/checkout/", api_views.checkout_api, name="checkout"),
     path("api/receipt/", api_views.receipt_api, name="receipt_api"),
     path(

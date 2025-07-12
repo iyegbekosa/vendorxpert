@@ -674,12 +674,23 @@ def checkout_api(request):
             item["product"].price * int(item["quantity"]) for item in cart
         )
 
-        order = serializer.save(commit=False)
-        order.created_by = user
-        order.total_cost = total_price
+        # Create order using validated data instead of save(commit=False)
         ref = str(uuid.uuid4()).replace("-", "")[:20]
-        order.ref = ref
-        order.save()
+
+        # Extract validated data
+        validated_data = serializer.validated_data
+
+        from store.models import Order
+
+        order = Order.objects.create(
+            created_by=user,
+            total_cost=total_price,
+            ref=ref,
+            first_name=validated_data.get("first_name"),
+            last_name=validated_data.get("last_name"),
+            phone=validated_data.get("phone"),
+            pickup_location=validated_data.get("pickup_location"),
+        )
 
         for item in cart:
             OrderItem.objects.create(
@@ -689,10 +700,18 @@ def checkout_api(request):
                 price=item["product"].price * int(item["quantity"]),
             )
 
+        # Calculate payment amounts
+        total_price_kobo = int(total_price * 100)
         estimated_fee_kobo = int(min(0.015 * total_price * 100 + 10000, 200000))
-        amount_kobo = int(total_price * 100) + estimated_fee_kobo
 
+        # Total amount customer pays (includes platform fee)
+        amount_kobo = total_price_kobo + estimated_fee_kobo
+
+        # Calculate vendor shares from the product prices only
         vendor_totals = defaultdict(int)
+        products_without_subaccount = []
+        total_unsplit_amount = 0
+
         for item in cart:
             product = item["product"]
             quantity = int(item["quantity"])
@@ -701,9 +720,41 @@ def checkout_api(request):
             subaccount_code = product.vendor.subaccount_code
             if subaccount_code:
                 vendor_totals[subaccount_code] += price_kobo
+            else:
+                # Track products from vendors without subaccount setup
+                products_without_subaccount.append(product.vendor.store_name)
+                total_unsplit_amount += price_kobo
 
+        # Handle admin share: only unsplit amounts + platform fee if no vendor splits
         admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
-        vendor_totals[admin_subaccount] += estimated_fee_kobo
+        if admin_subaccount and total_unsplit_amount > 0:
+            # Only add unsplit amounts to admin, not the platform fee
+            # The platform fee is handled by bearer_subaccount in Paystack
+            vendor_totals[admin_subaccount] = total_unsplit_amount
+
+        # The split should only include vendor shares from product prices
+        # Paystack will automatically charge fees to the bearer_subaccount
+        # Total split should equal the product prices (not including fees)
+        expected_split_total = total_price_kobo
+
+        # Remove any subaccounts with 0 amount
+        vendor_totals = {k: v for k, v in vendor_totals.items() if v > 0}
+
+        # Ensure split totals match the product prices
+        actual_split_total = sum(vendor_totals.values())
+        if actual_split_total != expected_split_total:
+            return Response(
+                {
+                    "detail": f"Split configuration error. Split total ({actual_split_total}) does not match product prices ({expected_split_total})",
+                    "debug": {
+                        "expected_split_total": expected_split_total,
+                        "actual_split_total": actual_split_total,
+                        "vendor_totals": dict(vendor_totals),
+                        "total_unsplit_amount": total_unsplit_amount,
+                    },
+                },
+                status=400,
+            )
 
         split = {
             "type": "flat",
@@ -724,9 +775,25 @@ def checkout_api(request):
             f"{protocol}://{request.get_host()}{reverse('paystack_callback_api')}"
         )
 
-        if not split["subaccounts"]:
+        # Check if we have any subaccounts to split to
+        if not vendor_totals:
             return Response(
                 {"detail": "No vendor subaccounts were found. Payment cannot proceed."},
+                status=400,
+            )
+
+        # Final validation
+        final_split_total = sum(vendor_totals.values())
+        if final_split_total > total_price_kobo:
+            return Response(
+                {
+                    "detail": f"Split configuration error. Split total ({final_split_total}) exceeds product prices ({total_price_kobo})",
+                    "debug": {
+                        "total_price_kobo": total_price_kobo,
+                        "vendor_totals": dict(vendor_totals),
+                        "split_total": final_split_total,
+                    },
+                },
                 status=400,
             )
 
@@ -735,8 +802,11 @@ def checkout_api(request):
             "amount": amount_kobo,
             "reference": payment.ref,
             "callback_url": callback_url,
-            "split": split,
         }
+
+        # Only add split if we have valid subaccounts
+        if vendor_totals and final_split_total <= total_price_kobo:
+            payload["split"] = split
 
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
@@ -917,11 +987,81 @@ def paystack_webhook_api(request):
                         order.is_paid = True
                         order.status = "completed"
                         order.save()
+
+                        # Clear the user's cart items for this order
+                        # Note: We can't clear the session-based cart from webhook
+                        # but we can mark the order as paid so the frontend can handle it
+                        logger.info(f"Order {order.ref} marked as paid and completed")
                     logger.info(f"Payment {reference} marked as paid")
                 else:
                     logger.info(f"Payment {reference} was already marked paid")
 
     return Response(status=200)
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Clear cart after successful payment",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            "order_ref": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="Order reference to verify before clearing cart",
+            ),
+        },
+        required=[],  # No required fields since order_ref is optional
+    ),
+    responses={
+        200: openapi.Response(
+            description="Cart cleared successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid request"),
+        401: openapi.Response(description="Authentication required"),
+        404: openapi.Response(description="Order not found or not paid"),
+    },
+    tags=["Cart"],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def clear_cart_after_payment_api(request):
+    """
+    Clear the cart after successful payment verification.
+
+    This endpoint can be called by the frontend after a successful payment
+    to ensure the cart is cleared. Optionally verifies the order reference.
+    """
+    order_ref = request.data.get("order_ref")
+
+    if order_ref:
+        # Verify the order exists and is paid before clearing cart
+        try:
+            from store.models import Order
+
+            order = Order.objects.get(
+                ref=order_ref, created_by=request.user, is_paid=True
+            )
+        except Order.DoesNotExist:
+            return Response(
+                {"success": False, "message": "Order not found or not paid"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+    # Clear the cart
+    cart = Cart(request)
+    cart.clear()
+
+    return Response(
+        {"success": True, "message": "Cart cleared successfully"},
+        status=status.HTTP_200_OK,
+    )
 
 
 @swagger_auto_schema(
