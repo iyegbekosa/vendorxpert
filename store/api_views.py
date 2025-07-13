@@ -1333,3 +1333,129 @@ def verify_payment_api(request):
             },
             status=400,
         )
+
+
+# Order History API
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get User Order History",
+    operation_description="Get all orders for the authenticated user",
+    responses={
+        200: openapi.Response(
+            description="Orders retrieved successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "orders": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                "ref": openapi.Schema(type=openapi.TYPE_STRING),
+                                "total_cost": openapi.Schema(type=openapi.TYPE_NUMBER),
+                                "status": openapi.Schema(type=openapi.TYPE_STRING),
+                                "created_at": openapi.Schema(type=openapi.TYPE_STRING),
+                                "items": openapi.Schema(
+                                    type=openapi.TYPE_ARRAY,
+                                    items=openapi.Schema(
+                                        type=openapi.TYPE_OBJECT,
+                                        properties={
+                                            "product": openapi.Schema(
+                                                type=openapi.TYPE_OBJECT,
+                                                properties={
+                                                    "title": openapi.Schema(
+                                                        type=openapi.TYPE_STRING
+                                                    ),
+                                                    "slug": openapi.Schema(
+                                                        type=openapi.TYPE_STRING
+                                                    ),
+                                                    "price": openapi.Schema(
+                                                        type=openapi.TYPE_NUMBER
+                                                    ),
+                                                    "thumbnail": openapi.Schema(
+                                                        type=openapi.TYPE_STRING
+                                                    ),
+                                                },
+                                            ),
+                                            "quantity": openapi.Schema(
+                                                type=openapi.TYPE_INTEGER
+                                            ),
+                                            "price": openapi.Schema(
+                                                type=openapi.TYPE_NUMBER
+                                            ),
+                                            "fulfilled": openapi.Schema(
+                                                type=openapi.TYPE_BOOLEAN
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
+        ),
+        401: openapi.Response(description="Unauthorized"),
+    },
+    tags=["Orders"],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def order_history_api(request):
+    """
+    Get all orders for the authenticated user.
+
+    Returns a list of all orders made by the user, including order details
+    and items within each order. Orders are sorted by creation date (newest first).
+    """
+    try:
+        user_profile = request.user.userprofile
+    except UserProfile.DoesNotExist:
+        return Response(
+            {"success": False, "message": "User profile not found"}, status=404
+        )
+
+    # Get all orders for this user, ordered by newest first
+    orders = Payment.objects.filter(user=user_profile, status="paid").order_by(
+        "-created_at"
+    )
+
+    orders_data = []
+    for payment in orders:
+        # Get all items for this order through the payment's order
+        order_items = OrderItem.objects.filter(order=payment.order)
+        items_data = []
+
+        for item in order_items:
+            items_data.append(
+                {
+                    "product": {
+                        "title": item.product.title,
+                        "slug": item.product.slug,
+                        "price": item.product.price,
+                        "thumbnail": item.product.get_thumbnail(),
+                    },
+                    "quantity": item.quantity,
+                    "price": item.price,
+                    "fulfilled": item.fulfilled,
+                }
+            )
+
+        orders_data.append(
+            {
+                "ref": payment.ref,
+                "total_cost": payment.amount,  # Payment model uses 'amount' field
+                "status": payment.status,
+                "created_at": payment.created_at.isoformat(),
+                "items": items_data,
+            }
+        )
+
+    return Response(
+        {
+            "success": True,
+            "orders": orders_data,
+        },
+        status=200,
+    )

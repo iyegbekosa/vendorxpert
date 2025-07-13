@@ -56,6 +56,7 @@ urlpatterns += [
     path(
         "api/verify-payment/", api_views.verify_payment_api, name="verify_payment_api"
     ),
+    path("api/order-history/", api_views.order_history_api, name="order_history_api"),
     path("api/receipt/", api_views.receipt_api, name="receipt_api"),
     path(
         "api/paystack/callback/",
