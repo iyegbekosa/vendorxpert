@@ -53,6 +53,9 @@ urlpatterns += [
         name="clear_cart_after_payment_api",
     ),
     path("api/checkout/", api_views.checkout_api, name="checkout"),
+    path(
+        "api/verify-payment/", api_views.verify_payment_api, name="verify_payment_api"
+    ),
     path("api/receipt/", api_views.receipt_api, name="receipt_api"),
     path(
         "api/paystack/callback/",

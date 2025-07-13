@@ -768,9 +768,8 @@ def checkout_api(request):
         )
 
         protocol = "https" if request.is_secure() else "http"
-        callback_url = (
-            f"{protocol}://{request.get_host()}{reverse('paystack_callback_api')}"
-        )
+        # Redirect to frontend success page instead of backend callback
+        callback_url = f"http://localhost:3000/home/cart/success?reference={ref}&amount={total_price}&status=success"
 
         # Check if we have any subaccounts to split to
         if not vendor_totals:
@@ -1156,3 +1155,181 @@ def receipt_api(request):
     return Response(
         {"order": order_data, "payment": payment_data}, status=status.HTTP_200_OK
     )
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Verify payment status after frontend redirect",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["reference"],
+        properties={
+            "reference": openapi.Schema(
+                type=openapi.TYPE_STRING, description="Payment reference from Paystack"
+            ),
+        },
+    ),
+    responses={
+        200: openapi.Response(
+            description="Payment verified successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "status": openapi.Schema(type=openapi.TYPE_STRING),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "order": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "ref": openapi.Schema(type=openapi.TYPE_STRING),
+                            "total_cost": openapi.Schema(type=openapi.TYPE_NUMBER),
+                            "is_paid": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                            "items": openapi.Schema(
+                                type=openapi.TYPE_ARRAY,
+                                items=openapi.Schema(
+                                    type=openapi.TYPE_OBJECT,
+                                    properties={
+                                        "id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                                        "product": openapi.Schema(
+                                            type=openapi.TYPE_OBJECT,
+                                            properties={
+                                                "id": openapi.Schema(
+                                                    type=openapi.TYPE_INTEGER
+                                                ),
+                                                "title": openapi.Schema(
+                                                    type=openapi.TYPE_STRING
+                                                ),
+                                                "slug": openapi.Schema(
+                                                    type=openapi.TYPE_STRING
+                                                ),
+                                                "price": openapi.Schema(
+                                                    type=openapi.TYPE_NUMBER
+                                                ),
+                                                "thumbnail": openapi.Schema(
+                                                    type=openapi.TYPE_STRING
+                                                ),
+                                            },
+                                        ),
+                                        "quantity": openapi.Schema(
+                                            type=openapi.TYPE_INTEGER
+                                        ),
+                                        "price": openapi.Schema(
+                                            type=openapi.TYPE_NUMBER
+                                        ),
+                                        "fulfilled": openapi.Schema(
+                                            type=openapi.TYPE_BOOLEAN
+                                        ),
+                                    },
+                                ),
+                            ),
+                        },
+                    ),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Payment verification failed"),
+        404: openapi.Response(description="Payment not found"),
+    },
+    tags=["Payment"],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def verify_payment_api(request):
+    """
+    Verify payment status after user returns from Paystack.
+
+    This endpoint should be called by the frontend after the user
+    is redirected back from Paystack to verify the payment status.
+    """
+    reference = request.data.get("reference")
+    if not reference:
+        return Response(
+            {"success": False, "message": "Payment reference is required"}, status=400
+        )
+
+    try:
+        payment = Payment.objects.get(ref=reference, user=request.user)
+    except Payment.DoesNotExist:
+        return Response({"success": False, "message": "Payment not found"}, status=404)
+
+    # Verify with Paystack
+    url = f"https://api.paystack.co/transaction/verify/{reference}"
+    headers = {"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"}
+
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+    except Exception as e:
+        return Response(
+            {"success": False, "message": f"Verification error: {str(e)}"}, status=500
+        )
+
+    if response.status_code != 200 or not data.get("status"):
+        return Response(
+            {"success": False, "message": "Failed to verify payment with Paystack"},
+            status=400,
+        )
+
+    payment_data = data["data"]
+
+    if payment_data["status"] == "success":
+        # Update payment status
+        payment.status = "paid"
+        payment.save()
+
+        # Update order status
+        order = payment.order
+        order.is_paid = True
+        if hasattr(order, "status"):
+            order.status = "completed"
+        order.save()
+
+        # Clear cart
+        cart = Cart(request)
+        cart.clear()
+
+        # Get order items with product details
+        order_items = OrderItem.objects.filter(order=order).select_related("product")
+        items_data = []
+        for item in order_items:
+            items_data.append(
+                {
+                    "id": item.id,
+                    "product": {
+                        "id": item.product.id,
+                        "title": item.product.title,
+                        "slug": item.product.slug,
+                        "price": item.product.price,
+                        "thumbnail": item.product.get_thumbnail(),
+                    },
+                    "quantity": item.quantity,
+                    "price": item.price,
+                    "fulfilled": item.fulfilled,
+                }
+            )
+
+        return Response(
+            {
+                "success": True,
+                "status": "paid",
+                "message": "Payment verified successfully",
+                "order": {
+                    "ref": order.ref,
+                    "total_cost": order.total_cost,
+                    "is_paid": order.is_paid,
+                    "items": items_data,
+                },
+            },
+            status=200,
+        )
+    else:
+        payment.status = "failed"
+        payment.save()
+        return Response(
+            {
+                "success": False,
+                "status": "failed",
+                "message": "Payment was not successful",
+            },
+            status=400,
+        )
