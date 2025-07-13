@@ -331,11 +331,8 @@ def add_review_api(request, pk):
     serializer = ReviewSerializer(data=request.data)
 
     if serializer.is_valid():
-        review = serializer.save(commit=False)
         user_profile = get_object_or_404(UserProfile, email=request.user.email)
-        review.product = product
-        review.author = user_profile
-        review.save()
+        review = serializer.save(product=product, author=user_profile)
         return Response({"success": True}, status=status.HTTP_201_CREATED)
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

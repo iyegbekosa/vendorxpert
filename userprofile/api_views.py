@@ -711,7 +711,7 @@ def toggle_fulfillment_api(request, pk):
     ],
     responses={
         200: openapi.Response(
-            description="Paginated list of reviews for vendor's products",
+            description="Paginated list of reviews for vendor's products with rating statistics",
             schema=openapi.Schema(
                 type=openapi.TYPE_OBJECT,
                 properties={
@@ -721,6 +721,44 @@ def toggle_fulfillment_api(request, pk):
                     "results": openapi.Schema(
                         type=openapi.TYPE_ARRAY,
                         items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                    "rating_stats": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "average_rating": openapi.Schema(
+                                type=openapi.TYPE_NUMBER,
+                                description="Average rating (0.0-5.0)",
+                            ),
+                            "total_reviews": openapi.Schema(
+                                type=openapi.TYPE_INTEGER,
+                                description="Total number of reviews",
+                            ),
+                            "rating_breakdown": openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    "5_star": openapi.Schema(
+                                        type=openapi.TYPE_INTEGER,
+                                        description="Number of 5-star reviews",
+                                    ),
+                                    "4_star": openapi.Schema(
+                                        type=openapi.TYPE_INTEGER,
+                                        description="Number of 4-star reviews",
+                                    ),
+                                    "3_star": openapi.Schema(
+                                        type=openapi.TYPE_INTEGER,
+                                        description="Number of 3-star reviews",
+                                    ),
+                                    "2_star": openapi.Schema(
+                                        type=openapi.TYPE_INTEGER,
+                                        description="Number of 2-star reviews",
+                                    ),
+                                    "1_star": openapi.Schema(
+                                        type=openapi.TYPE_INTEGER,
+                                        description="Number of 1-star reviews",
+                                    ),
+                                },
+                            ),
+                        },
                     ),
                 },
             ),
@@ -737,7 +775,7 @@ def vendor_reviews_api(request):
     Get all reviews for a vendor's products.
 
     Returns a paginated list of all reviews for products belonging to the authenticated vendor.
-    Can be filtered by rating.
+    Can be filtered by rating. Also includes rating statistics.
     """
     if not hasattr(request.user, "vendor_profile"):
         return Response(
@@ -749,12 +787,28 @@ def vendor_reviews_api(request):
 
     # Get all reviews for this vendor's products
     from store.models import Review
+    from django.db.models import Avg, Count
 
-    reviews = (
-        Review.objects.filter(product__vendor=vendor)
-        .select_related("product", "author")
-        .order_by("-created_date")
+    all_reviews = Review.objects.filter(product__vendor=vendor).select_related(
+        "product", "author"
     )
+
+    # Calculate rating statistics
+    rating_stats = all_reviews.aggregate(
+        average_rating=Avg("rating"), total_reviews=Count("id")
+    )
+
+    # Get rating breakdown (count for each star rating)
+    rating_breakdown = {
+        "5_star": all_reviews.filter(rating=5).count(),
+        "4_star": all_reviews.filter(rating=4).count(),
+        "3_star": all_reviews.filter(rating=3).count(),
+        "2_star": all_reviews.filter(rating=2).count(),
+        "1_star": all_reviews.filter(rating=1).count(),
+    }
+
+    # Get reviews for pagination (after calculating stats)
+    reviews = all_reviews.order_by("-created_date")
 
     # Filter by rating if provided
     rating = request.GET.get("rating")
@@ -783,8 +837,8 @@ def vendor_reviews_api(request):
                     },
                     "author": {
                         "id": review.author.id,
-                        "name": review.author.user.get_full_name()
-                        or review.author.user.username,
+                        "name": f"{review.author.first_name} {review.author.last_name}".strip()
+                        or review.author.user_name,
                     },
                     "rating": review.rating,
                     "text": review.text,
@@ -792,7 +846,24 @@ def vendor_reviews_api(request):
                 }
             )
 
-    return paginator.get_paginated_response(serialized_reviews)
+    # Prepare response data with statistics
+    response_data = {
+        "count": paginator.page.paginator.count if result_page is not None else 0,
+        "next": paginator.get_next_link() if result_page is not None else None,
+        "previous": paginator.get_previous_link() if result_page is not None else None,
+        "results": serialized_reviews,
+        "rating_stats": {
+            "average_rating": (
+                round(rating_stats["average_rating"], 1)
+                if rating_stats["average_rating"]
+                else 0.0
+            ),
+            "total_reviews": rating_stats["total_reviews"],
+            "rating_breakdown": rating_breakdown,
+        },
+    }
+
+    return Response(response_data, status=status.HTTP_200_OK)
 
 
 @swagger_auto_schema(
@@ -892,8 +963,8 @@ def vendor_reviews_public_api(request, vendor_id):
                         "slug": review.product.slug,
                     },
                     "author": {
-                        "name": review.author.user.get_full_name()
-                        or review.author.user.username,
+                        "name": f"{review.author.first_name} {review.author.last_name}".strip()
+                        or review.author.user_name,
                     },
                     "rating": review.rating,
                     "text": review.text,
