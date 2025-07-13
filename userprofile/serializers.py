@@ -11,14 +11,35 @@ from store.utils import create_paystack_subaccount
 
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
+    first_name = serializers.CharField(max_length=150, required=True, allow_blank=False)
+    last_name = serializers.CharField(max_length=150, required=True, allow_blank=False)
 
     class Meta:
         model = UserProfile
-        fields = ["user_name", "email", "password"]
+        fields = ["user_name", "email", "first_name", "last_name", "password"]
+
+    def validate_first_name(self, value):
+        """Ensure first_name is not just whitespace"""
+        if not value or not value.strip():
+            raise serializers.ValidationError(
+                "First name is required and cannot be empty."
+            )
+        return value.strip()
+
+    def validate_last_name(self, value):
+        """Ensure last_name is not just whitespace"""
+        if not value or not value.strip():
+            raise serializers.ValidationError(
+                "Last name is required and cannot be empty."
+            )
+        return value.strip()
 
     def create(self, validated_data):
         user = UserProfile(
-            user_name=validated_data["user_name"], email=validated_data.get("email", "")
+            user_name=validated_data["user_name"],
+            email=validated_data.get("email", ""),
+            first_name=validated_data["first_name"],
+            last_name=validated_data["last_name"],
         )
         user.set_password(validated_data["password"])
         user.save()

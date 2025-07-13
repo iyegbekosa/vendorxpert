@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "phonenumber_field",
     "django.contrib.humanize",
     "rest_framework",
+    "rest_framework_simplejwt",
     "drf_yasg",
 ]
 
@@ -231,8 +232,24 @@ if DEBUG:
 # Swagger settings for JWT authentication
 SWAGGER_SETTINGS = {
     "SECURITY_DEFINITIONS": {
-        "Bearer": {"type": "apiKey", "name": "Authorization", "in": "header"}
+        "Bearer": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header",
+            "description": 'JWT authorization header using the Bearer scheme. Example: "Authorization: Bearer {token}"',
+        }
     },
     "USE_SESSION_AUTH": False,
     "JSON_EDITOR": True,
+    "DEFAULT_MODEL_RENDERING": "example",
+    "OPERATIONS_SORTER": "alpha",
+    "TAGS_SORTER": "alpha",
+    "DOC_EXPANSION": "none",
+    "DEEP_LINKING": True,
+    "SHOW_EXTENSIONS": True,
+}
+
+# Additional Redoc settings
+REDOC_SETTINGS = {
+    "LAZY_RENDERING": False,
 }

@@ -295,6 +295,7 @@ def search_api(request):
     method="post",
     operation_description="Add a review for a product",
     request_body=ReviewSerializer,
+    security=[{"Bearer": []}],  # Add this line to enable JWT auth in Swagger
     manual_parameters=[
         openapi.Parameter(
             "pk",
@@ -624,6 +625,7 @@ def api_change_quantity(request):
     method="post",
     operation_description="Process checkout and initiate payment",
     request_body=CheckoutSerializer,
+    security=[{"Bearer": []}],  # Add JWT auth requirement for Swagger
     responses={
         200: openapi.Response(
             description="Payment initialized successfully",
@@ -1160,6 +1162,7 @@ def receipt_api(request):
 @swagger_auto_schema(
     method="post",
     operation_description="Verify payment status after frontend redirect",
+    security=[{"Bearer": []}],  # Add JWT auth requirement for Swagger
     request_body=openapi.Schema(
         type=openapi.TYPE_OBJECT,
         required=["reference"],
@@ -1340,6 +1343,7 @@ def verify_payment_api(request):
     method="get",
     operation_summary="Get User Order History",
     operation_description="Get all orders for the authenticated user",
+    security=[{"Bearer": []}],  # Add JWT auth requirement for Swagger
     responses={
         200: openapi.Response(
             description="Orders retrieved successfully",
@@ -1409,12 +1413,8 @@ def order_history_api(request):
     Returns a list of all orders made by the user, including order details
     and items within each order. Orders are sorted by creation date (newest first).
     """
-    try:
-        user_profile = request.user.userprofile
-    except UserProfile.DoesNotExist:
-        return Response(
-            {"success": False, "message": "User profile not found"}, status=404
-        )
+    # request.user is already a UserProfile instance (custom user model)
+    user_profile = request.user
 
     # Get all orders for this user, ordered by newest first
     orders = Payment.objects.filter(user=user_profile, status="paid").order_by(

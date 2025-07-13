@@ -63,7 +63,8 @@ def signup_api(request):
     """
     Register a new user account.
 
-    Creates a new user account and automatically logs them in.
+    Creates a new user account with required fields: username, email, first_name, last_name, and password.
+    Automatically logs the user in upon successful registration.
     """
     serializer = SignupSerializer(data=request.data)
     if serializer.is_valid():
