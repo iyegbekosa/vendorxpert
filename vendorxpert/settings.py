@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 from pathlib import Path
+from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -20,7 +21,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-9hh=97qf+bi1m&9z=_q!z2plgtv541iu!b45)b@vbi7g*%v=uh"
+SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -157,9 +158,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = "userprofile.UserProfile"
 
-PAYSTACK_SECRET_KEY = "sk_test_662282b5b0bebbf21c9f5e21c1ad17f198ffbb09"
+PAYSTACK_SECRET_KEY = config('PAYSTACK_SECRET_KEY')
 
-ADMIN_SUBACCOUNT_CODE = "ACCT_t4cjkaxq2ldi4c2"
+ADMIN_SUBACCOUNT_CODE = config('ADMIN_SUBACCOUNT_CODE')
 
 STORAGES = {
     "default": {
