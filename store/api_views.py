@@ -1459,3 +1459,215 @@ def order_history_api(request):
         },
         status=200,
     )
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_description="Get list of all banks from Paystack",
+    responses={
+        200: openapi.Response(
+            description="Banks retrieved successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "status": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "data": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                "name": openapi.Schema(type=openapi.TYPE_STRING),
+                                "slug": openapi.Schema(type=openapi.TYPE_STRING),
+                                "code": openapi.Schema(type=openapi.TYPE_STRING),
+                                "longcode": openapi.Schema(type=openapi.TYPE_STRING),
+                                "gateway": openapi.Schema(type=openapi.TYPE_STRING),
+                                "pay_with_bank": openapi.Schema(
+                                    type=openapi.TYPE_BOOLEAN
+                                ),
+                                "active": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                                "country": openapi.Schema(type=openapi.TYPE_STRING),
+                                "currency": openapi.Schema(type=openapi.TYPE_STRING),
+                                "type": openapi.Schema(type=openapi.TYPE_STRING),
+                            },
+                        ),
+                    ),
+                },
+            ),
+        ),
+        500: openapi.Response(description="Error fetching banks from Paystack"),
+    },
+    tags=["Banking"],
+)
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def get_banks_api(request):
+    """
+    Get list of all banks from Paystack.
+
+    This endpoint fetches the current list of supported banks from Paystack.
+    No authentication required.
+    """
+    try:
+        url = "https://api.paystack.co/bank"
+        headers = {
+            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        response = requests.get(url, headers=headers)
+
+        if response.status_code == 200:
+            data = response.json()
+            return Response(data, status=status.HTTP_200_OK)
+        else:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Failed to fetch banks from Paystack",
+                    "error": response.text,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    except requests.RequestException as e:
+        return Response(
+            {
+                "status": False,
+                "message": "Network error while fetching banks",
+                "error": str(e),
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+    except Exception as e:
+        return Response(
+            {
+                "status": False,
+                "message": "An unexpected error occurred",
+                "error": str(e),
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Verify bank account details using Paystack",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["account_number", "bank_code"],
+        properties={
+            "account_number": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="Bank account number",
+                example="0123456789",
+            ),
+            "bank_code": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="Bank code from the banks list",
+                example="044",
+            ),
+        },
+    ),
+    responses={
+        200: openapi.Response(
+            description="Account verification successful",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "status": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "data": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "account_number": openapi.Schema(type=openapi.TYPE_STRING),
+                            "account_name": openapi.Schema(type=openapi.TYPE_STRING),
+                            "bank_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                        },
+                    ),
+                },
+            ),
+        ),
+        400: openapi.Response(
+            description="Invalid account details or validation failed"
+        ),
+        500: openapi.Response(description="Error verifying account with Paystack"),
+    },
+    tags=["Banking"],
+)
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def verify_account_api(request):
+    """
+    Verify bank account details using Paystack.
+
+    This endpoint verifies if the provided account number and bank code
+    correspond to a valid bank account and returns the account holder's name.
+    """
+    account_number = request.data.get("account_number")
+    bank_code = request.data.get("bank_code")
+
+    if not account_number or not bank_code:
+        return Response(
+            {
+                "status": False,
+                "message": "Account number and bank code are required",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Basic validation for account number
+    if not account_number.isdigit() or len(account_number) != 10:
+        return Response(
+            {
+                "status": False,
+                "message": "Account number must be exactly 10 digits",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        url = "https://api.paystack.co/bank/resolve"
+        headers = {
+            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        params = {
+            "account_number": account_number,
+            "bank_code": bank_code,
+        }
+
+        response = requests.get(url, headers=headers, params=params)
+        data = response.json()
+
+        if response.status_code == 200 and data.get("status"):
+            return Response(data, status=status.HTTP_200_OK)
+        else:
+            error_message = data.get("message", "Account verification failed")
+            return Response(
+                {
+                    "status": False,
+                    "message": error_message,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    except requests.RequestException as e:
+        return Response(
+            {
+                "status": False,
+                "message": "Network error while verifying account",
+                "error": str(e),
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+    except Exception as e:
+        return Response(
+            {
+                "status": False,
+                "message": "An unexpected error occurred",
+                "error": str(e),
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )

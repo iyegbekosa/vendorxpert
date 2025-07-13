@@ -66,4 +66,9 @@ urlpatterns += [
     path(
         "api/paystack_webhook/", api_views.paystack_webhook_api, name="paystack_webhook"
     ),
+    # Banking endpoints
+    path("api/banks/", api_views.get_banks_api, name="get_banks_api"),
+    path(
+        "api/verify-account/", api_views.verify_account_api, name="verify_account_api"
+    ),
 ]
