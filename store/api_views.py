@@ -771,7 +771,7 @@ def checkout_api(request):
 
         protocol = "https" if request.is_secure() else "http"
         # Redirect to frontend success page instead of backend callback
-        callback_url = f"http://localhost:3000/home/cart/success?reference={ref}&amount={total_price}&status=success"
+        callback_url = f"http://localhost:3000/success?reference={ref}&amount={total_price}&status=success"
 
         # Check if we have any subaccounts to split to
         if not vendor_totals:
