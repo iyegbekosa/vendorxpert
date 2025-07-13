@@ -282,15 +282,14 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         exclude = ["vendor", "slug", "created_at", "updated_at"]
 
     def create(self, validated_data):
-        # Auto-generate slug from title when creating a new product
-        if "title" in validated_data:
-            validated_data["slug"] = slugify(validated_data["title"])
+        # The slug will be auto-generated in the model's save method with uniqueness
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        # Auto-generate slug from title when updating product title
+        # Update the product - slug will be regenerated if title changes
         if "title" in validated_data:
-            validated_data["slug"] = slugify(validated_data["title"])
+            # Clear the slug so it gets regenerated in the model's save method
+            instance.slug = ""
         return super().update(instance, validated_data)
 
 

@@ -115,10 +115,23 @@ class Product(models.Model):
         return round(avg_rating, 1) if avg_rating is not None else 0
 
     def save(self, *args, **kwargs):
-        # Auto-generate slug from title if not provided
+        # Auto-generate unique slug from title if not provided
         if not self.slug and self.title:
-            self.slug = slugify(self.title)
+            self.slug = self._generate_unique_slug()
         super().save(*args, **kwargs)
+
+    def _generate_unique_slug(self):
+        """Generate a unique slug for the product"""
+        base_slug = slugify(self.title)
+        slug = base_slug
+        counter = 1
+
+        # Keep checking until we find a unique slug
+        while Product.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+            slug = f"{base_slug}-{counter}"
+            counter += 1
+
+        return slug
 
 
 class Review(models.Model):

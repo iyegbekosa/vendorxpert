@@ -119,7 +119,9 @@ def register_vendor(request):
             bank_code=request.POST["bank_code"],
         )
         try:
-            create_paystack_subaccount(vendor)
+            create_paystack_subaccount(
+                vendor, request.POST["account_number"], request.POST["bank_code"]
+            )
         except Exception as e:
             # Optional: rollback or log
             print("Subaccount error:", e)
