@@ -37,10 +37,22 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         max_length=10,
         help_text="Your bank code (e.g., 044 for Access Bank, 058 for GTBank) (required)",
     )
+    phone_number = serializers.CharField(
+        required=False, allow_blank=True, help_text="Your phone number (optional)"
+    )
+    whatsapp_number = serializers.CharField(
+        required=False, allow_blank=True, help_text="Your WhatsApp number (optional)"
+    )
 
     class Meta:
         model = VendorProfile
-        fields = ["store_name", "account_number", "bank_code"]
+        fields = [
+            "store_name",
+            "account_number",
+            "bank_code",
+            "phone_number",
+            "whatsapp_number",
+        ]
 
     def validate_account_number(self, value):
         """
@@ -115,6 +127,44 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Store name contains invalid characters")
 
         return store_name
+
+    def validate_phone_number(self, value):
+        """
+        Validate phone number format and uniqueness if provided
+        """
+        if not value or not value.strip():
+            return None
+
+        # Basic validation - you can expand this based on your requirements
+        phone_number = value.strip()
+
+        # Check if phone number already exists for another vendor
+        if VendorProfile.objects.filter(phone_number=phone_number).exists():
+            raise serializers.ValidationError(
+                "This phone number is already registered with another vendor"
+            )
+
+        return phone_number
+
+    def validate_whatsapp_number(self, value):
+        """
+        Validate WhatsApp number format and uniqueness if provided
+        """
+        if not value or not value.strip():
+            return None
+
+        # Basic validation - you can expand this based on your requirements
+        whatsapp_number = value.strip()
+
+        # Check if WhatsApp number already exists for another vendor
+        if VendorProfile.objects.filter(whatsapp_number=whatsapp_number).exists():
+            raise serializers.ValidationError(
+                "This WhatsApp number is already registered with another vendor"
+            )
+
+        return whatsapp_number
+
+    def validate(self, data):
         """
         Validate that the user isn't already a vendor and other business rules
         """
@@ -124,17 +174,22 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         if hasattr(request.user, "vendor_profile"):
             raise serializers.ValidationError("User is already registered as a vendor")
 
-        # You can add more validation here, such as:
-        # - Check if account number format is valid
-        # - Check if bank code exists in your supported banks
-        # - Validate store name uniqueness if needed
-
         return data
 
     def create(self, validated_data):
         request = self.context["request"]
         account_number = validated_data.pop("account_number")
         bank_code = validated_data.pop("bank_code")
+
+        # Handle phone numbers - only set if provided and not empty
+        phone_number = validated_data.pop("phone_number", None)
+        whatsapp_number = validated_data.pop("whatsapp_number", None)
+
+        # Clean empty strings to None
+        if phone_number == "" or (phone_number and not phone_number.strip()):
+            phone_number = None
+        if whatsapp_number == "" or (whatsapp_number and not whatsapp_number.strip()):
+            whatsapp_number = None
 
         try:
             # Step 1: Get or create a default plan for new vendors
@@ -153,6 +208,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                 "subscription_expiry": timezone.now() + timedelta(days=30),
                 "plan": default_plan,
                 "subscription_status": "active",
+                "is_verified": True,  # Auto-verify new vendors for now
                 **validated_data,
             }
 
@@ -162,9 +218,19 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                     f"Welcome to {validated_data.get('store_name', 'our store')}! We offer quality products and excellent service."
                 )
 
+            # Only set phone numbers if provided, otherwise they will remain NULL
+            if phone_number:
+                vendor_data["phone_number"] = phone_number
+            if whatsapp_number:
+                vendor_data["whatsapp_number"] = whatsapp_number
+
             vendor = VendorProfile.objects.create(**vendor_data)
 
-            # Step 3: Create Paystack subaccount and link it to the vendor
+            # Step 3: Mark the user as a vendor
+            request.user.is_vendor = True
+            request.user.save()
+
+            # Step 4: Create Paystack subaccount and link it to the vendor
             try:
                 create_paystack_subaccount(vendor, account_number, bank_code)
             except Exception as paystack_error:
@@ -174,7 +240,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
                 logger = logging.getLogger(__name__)
                 logger.error(
-                    f"Failed to create Paystack subaccount for vendor {vendor.id}: {paystack_error}"
+                    f"Failed to create Paystack subaccount for vendor {vendor.pk}: {paystack_error}"
                 )
 
                 # You could also set a flag to indicate incomplete setup

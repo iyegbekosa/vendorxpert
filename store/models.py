@@ -75,7 +75,18 @@ class Product(models.Model):
 
     def make_thumbnail(self, product_image, size=(300, 300)):
         img = Image.open(product_image)
-        img.convert("RGB")
+
+        # Convert RGBA to RGB if necessary (for PNG with transparency)
+        if img.mode in ("RGBA", "LA", "P"):
+            # Create a white background and paste the image onto it
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
         img.thumbnail(size)
 
         thumb_io = BytesIO()

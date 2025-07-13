@@ -161,7 +161,9 @@ PAYSTACK_SECRET_KEY = "sk_test_662282b5b0bebbf21c9f5e21c1ad17f198ffbb09"
 ADMIN_SUBACCOUNT_CODE = "ACCT_t4cjkaxq2ldi4c2"
 
 STORAGES = {
-    # ...
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
