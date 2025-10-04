@@ -410,3 +410,37 @@ class VendorListSerializer(serializers.ModelSerializer):
         return Product.objects.filter(
             vendor=obj, status=Product.ACTIVE, stock=Product.IN_STOCK
         ).count()
+
+
+class VendorPlanSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VendorPlan
+        fields = [
+            "id",
+            "name",
+            "price",
+            "max_products",
+            "paystack_plan_code",
+            "is_active",
+        ]
+        read_only_fields = ["id", "paystack_plan_code"]
+
+
+class SubscriptionInitiateSerializer(serializers.Serializer):
+    plan_id = serializers.IntegerField(
+        help_text="ID of the vendor plan to subscribe to"
+    )
+
+    def validate_plan_id(self, value):
+        try:
+            plan = VendorPlan.objects.get(id=value, is_active=True)
+            return value
+        except VendorPlan.DoesNotExist:
+            raise serializers.ValidationError("Invalid or inactive plan selected.")
+
+
+class SubscriptionResponseSerializer(serializers.Serializer):
+    authorization_url = serializers.URLField(help_text="Paystack payment URL")
+    access_code = serializers.CharField(help_text="Paystack access code")
+    reference = serializers.CharField(help_text="Payment reference")
+    message = serializers.CharField(help_text="Success message")

@@ -5,24 +5,45 @@ from .models import Product, Review, Order, Category
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
-        fields = ['id', 'title', 'slug']
+        fields = ["id", "title", "slug"]
 
 
 class ProductSerializer(serializers.ModelSerializer):
     average_rating = serializers.SerializerMethodField()
+    vendor = serializers.SerializerMethodField()
+
+    description = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = Product
         fields = [
-            'id', 'title', 'price', 'get_thumbnail', 'slug', 'category', 
-            'display_price', 'get_stock_display', 'average_rating', 'featured'
+            "id",
+            "title",
+            "price",
+            "get_thumbnail",
+            "slug",
+            "category",
+            "display_price",
+            "get_stock_display",
+            "average_rating",
+            "featured",
+            "vendor",
+            "description",
         ]
+
     def get_average_rating(self, obj):
         return obj.average_rating()
+
+    def get_vendor(self, obj):
+        from userprofile.serializers import VendorListSerializer
+
+        return VendorListSerializer(obj.vendor).data
+
 
 class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
-        fields = ['rating', 'text']
+        fields = ["rating", "text"]
 
 
 class CartItemSerializer(serializers.Serializer):
@@ -31,15 +52,16 @@ class CartItemSerializer(serializers.Serializer):
     total_price = serializers.IntegerField()
 
     def get_product(self, obj):
-        product = obj['product']
+        product = obj["product"]
         return {
-            'id': product.id,
-            'title': product.title,
-            'thumbnail': product.get_thumbnail(),
-            'price': product.display_price(),
+            "id": product.id,
+            "title": product.title,
+            "thumbnail": product.get_thumbnail(),
+            "price": product.display_price(),
         }
-    
+
+
 class CheckoutSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
-        fields = ['first_name', 'last_name', 'phone', 'pickup_location']
+        fields = ["first_name", "last_name", "phone", "pickup_location"]

@@ -21,7 +21,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY')
+SECRET_KEY = config("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -158,9 +158,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = "userprofile.UserProfile"
 
-PAYSTACK_SECRET_KEY = config('PAYSTACK_SECRET_KEY')
+PAYSTACK_SECRET_KEY = config("PAYSTACK_SECRET_KEY")
 
-ADMIN_SUBACCOUNT_CODE = config('ADMIN_SUBACCOUNT_CODE')
+ADMIN_SUBACCOUNT_CODE = config("ADMIN_SUBACCOUNT_CODE")
 
 STORAGES = {
     "default": {
@@ -200,6 +200,7 @@ SIMPLE_JWT = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://192.168.0.114:3000",
 ]
 
 CORS_ALLOW_CREDENTIALS = True

@@ -58,6 +58,12 @@ urlpatterns += [
         api_views.toggle_fulfillment_api,
         name="toggle_fulfillment_api",
     ),
+    path("api/vendor-plans/", api_views.vendor_plans_api, name="vendor_plans_api"),
+    path(
+        "api/my-subscription/",
+        api_views.my_subscription_status_api,
+        name="my_subscription_status_api",
+    ),
     path("api/resubscribe/", api_views.resubscribe_api, name="resubscribe_api"),
     path(
         "api/cancel_subscription/",

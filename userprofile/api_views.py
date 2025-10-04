@@ -12,6 +12,8 @@ from .serializers import (
     ProductCreateSerializer,
     VendorOrderDetailSerializer,
     VendorOrderItemSerializer,
+    VendorPlanSerializer,
+    SubscriptionInitiateSerializer,
 )
 from .models import VendorProfile, VendorPlan
 from store.utils import create_paystack_subaccount
@@ -396,6 +398,173 @@ def my_store_api(request):
 
     serializer = ProductSerializer(result_page, many=True)
     return paginator.get_paginated_response(serializer.data)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get My Subscription Status",
+    operation_description="Get the current user's subscription status and details",
+    responses={
+        200: openapi.Response(
+            description="Current user's subscription details",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "is_vendor": openapi.Schema(
+                        type=openapi.TYPE_BOOLEAN,
+                        description="Whether user is a vendor",
+                    ),
+                    "subscription_status": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        description="Current subscription status",
+                    ),
+                    "subscription_start": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        format="date-time",
+                        description="Subscription start date",
+                    ),
+                    "subscription_expiry": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        format="date-time",
+                        description="Subscription expiry date",
+                    ),
+                    "is_active": openapi.Schema(
+                        type=openapi.TYPE_BOOLEAN,
+                        description="Whether subscription is currently active (including grace period)",
+                    ),
+                    "days_remaining": openapi.Schema(
+                        type=openapi.TYPE_INTEGER,
+                        description="Days until expiry (negative if expired)",
+                    ),
+                    "in_grace_period": openapi.Schema(
+                        type=openapi.TYPE_BOOLEAN,
+                        description="Whether in 7-day grace period",
+                    ),
+                    "plan": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "id": openapi.Schema(
+                                type=openapi.TYPE_INTEGER, description="Plan ID"
+                            ),
+                            "name": openapi.Schema(
+                                type=openapi.TYPE_STRING, description="Plan name"
+                            ),
+                            "price": openapi.Schema(
+                                type=openapi.TYPE_NUMBER, description="Monthly price"
+                            ),
+                            "max_products": openapi.Schema(
+                                type=openapi.TYPE_INTEGER,
+                                description="Maximum products allowed",
+                            ),
+                        },
+                        nullable=True,
+                    ),
+                    "product_usage": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "current_count": openapi.Schema(
+                                type=openapi.TYPE_INTEGER,
+                                description="Current number of active products",
+                            ),
+                            "max_allowed": openapi.Schema(
+                                type=openapi.TYPE_INTEGER,
+                                description="Maximum products allowed by plan",
+                            ),
+                            "remaining": openapi.Schema(
+                                type=openapi.TYPE_INTEGER,
+                                description="Remaining product slots",
+                            ),
+                        },
+                    ),
+                },
+            ),
+        ),
+        403: openapi.Response(description="User is not a vendor"),
+        401: openapi.Response(description="Authentication required"),
+    },
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def my_subscription_status_api(request):
+    """
+    Get the current user's subscription status and details.
+
+    Returns comprehensive subscription information including:
+    - Current subscription status and dates
+    - Plan details and limits
+    - Product usage statistics
+    - Grace period information
+    """
+    try:
+        vendor = request.user.vendor_profile
+    except AttributeError:
+        return Response(
+            {"is_vendor": False, "message": "User is not registered as a vendor"},
+            status=403,
+        )
+
+    # Calculate subscription details
+    now = timezone.now()
+    is_active = vendor.is_subscription_active()
+
+    # Calculate days remaining
+    days_remaining = 0
+    in_grace_period = False
+    if vendor.subscription_expiry:
+        time_diff = vendor.subscription_expiry - now
+        days_remaining = time_diff.days
+
+        # Check if in grace period (expired but within 7 days)
+        if days_remaining < 0:
+            grace_period_end = vendor.subscription_expiry + timedelta(days=7)
+            in_grace_period = now <= grace_period_end
+
+    # Plan information
+    plan_info = None
+    if vendor.plan:
+        plan_info = {
+            "id": vendor.plan.pk,
+            "name": vendor.plan.name,
+            "price": float(vendor.plan.price),
+            "max_products": vendor.plan.max_products,
+        }
+
+    # Product usage statistics
+    current_product_count = Product.objects.filter(
+        vendor=vendor, status=Product.ACTIVE
+    ).count()
+
+    max_allowed = vendor.plan.max_products if vendor.plan else 0
+    remaining = max(0, max_allowed - current_product_count)
+
+    product_usage = {
+        "current_count": current_product_count,
+        "max_allowed": max_allowed,
+        "remaining": remaining,
+    }
+
+    return Response(
+        {
+            "is_vendor": True,
+            "subscription_status": vendor.subscription_status,
+            "subscription_start": (
+                vendor.subscription_start.isoformat()
+                if vendor.subscription_start
+                else None
+            ),
+            "subscription_expiry": (
+                vendor.subscription_expiry.isoformat()
+                if vendor.subscription_expiry
+                else None
+            ),
+            "is_active": is_active,
+            "days_remaining": days_remaining,
+            "in_grace_period": in_grace_period,
+            "plan": plan_info,
+            "product_usage": product_usage,
+        },
+        status=200,
+    )
 
 
 @swagger_auto_schema(
@@ -976,9 +1145,101 @@ def vendor_reviews_public_api(request, vendor_id):
     return paginator.get_paginated_response(serialized_reviews)
 
 
+@swagger_auto_schema(
+    method="get",
+    operation_summary="List Vendor Plans",
+    operation_description="Get all available vendor subscription plans",
+    responses={
+        200: openapi.Response(
+            description="List of available vendor plans",
+            schema=openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "id": openapi.Schema(
+                            type=openapi.TYPE_INTEGER, description="Plan ID"
+                        ),
+                        "name": openapi.Schema(
+                            type=openapi.TYPE_STRING, description="Plan name"
+                        ),
+                        "price": openapi.Schema(
+                            type=openapi.TYPE_NUMBER,
+                            description="Monthly price in Naira",
+                        ),
+                        "max_products": openapi.Schema(
+                            type=openapi.TYPE_INTEGER,
+                            description="Maximum products allowed",
+                        ),
+                        "is_active": openapi.Schema(
+                            type=openapi.TYPE_BOOLEAN,
+                            description="Plan availability status",
+                        ),
+                    },
+                ),
+            ),
+        )
+    },
+)
+@api_view(["GET"])
+def vendor_plans_api(request):
+    """
+    List all available vendor subscription plans.
+    """
+    plans = VendorPlan.objects.filter(is_active=True).order_by("price")
+    serializer = VendorPlanSerializer(plans, many=True)
+    return Response(serializer.data, status=200)
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Initialize/Renew Subscription",
+    operation_description="Initialize a new subscription or renew/upgrade existing subscription. Returns Paystack payment URL.",
+    request_body=SubscriptionInitiateSerializer,
+    responses={
+        200: openapi.Response(
+            description="Payment initialization successful",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "authorization_url": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="Paystack payment URL"
+                    ),
+                    "access_code": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="Paystack access code"
+                    ),
+                    "reference": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="Payment reference"
+                    ),
+                },
+            ),
+        ),
+        400: openapi.Response(
+            description="Bad request - Invalid plan or missing data",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "error": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="Error message"
+                    )
+                },
+            ),
+        ),
+        403: openapi.Response(description="User is not a vendor"),
+        404: openapi.Response(description="Plan not found"),
+    },
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def resubscribe_api(request):
+    """
+    Initialize or renew a vendor subscription.
+
+    This endpoint handles subscription initiation and renewal by:
+    1. Validating the selected plan
+    2. Creating a Paystack payment session
+    3. Returning payment URL for completion
+    """
     user = request.user
 
     try:
@@ -986,20 +1247,40 @@ def resubscribe_api(request):
     except VendorProfile.DoesNotExist:
         return Response({"error": "User is not a vendor."}, status=400)
 
-    plan_id = request.data.get("plan_id")
+    # Validate request data using serializer
+    serializer = SubscriptionInitiateSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
 
-    if not plan_id:
-        return Response({"error": "Plan ID is required."}, status=400)
+    plan_id = serializer.validated_data["plan_id"]
 
     try:
         selected_plan = VendorPlan.objects.get(id=plan_id, is_active=True)
     except VendorPlan.DoesNotExist:
         return Response({"error": "Invalid or inactive plan."}, status=404)
 
-    if not selected_plan.paystack_plan_code:
+    # Handle free plans
+    if selected_plan.price == 0:
+        vendor.plan = selected_plan
+        vendor.subscription_status = "active"
+        vendor.subscription_start = timezone.now()
+        vendor.subscription_expiry = timezone.now() + timedelta(days=30)
+        vendor.save()
         return Response(
-            {"error": "Selected plan is not linked to Paystack."}, status=400
+            {
+                "message": "Successfully subscribed to free plan",
+                "plan": selected_plan.name,
+                "expiry": vendor.subscription_expiry.isoformat(),
+            },
+            status=200,
         )
+
+    # Handle paid plans
+    # if not selected_plan.paystack_plan_code:
+    #     return Response(
+    #         {"error": "Selected plan is not available for subscription at this time."},
+    #         status=400,
+    #     )
 
     ref = str(uuid.uuid4()).replace("-", "")[:20]
 
@@ -1047,6 +1328,37 @@ def resubscribe_api(request):
         )
 
 
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Cancel Subscription",
+    operation_description="Cancel the vendor's active subscription. The subscription will remain active until the current billing period ends.",
+    responses={
+        200: openapi.Response(
+            description="Subscription cancelled successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="Success message"
+                    )
+                },
+            ),
+        ),
+        400: openapi.Response(
+            description="Subscription already cancelled or other error",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="Error message"
+                    )
+                },
+            ),
+        ),
+        403: openapi.Response(description="User is not a vendor"),
+        502: openapi.Response(description="Failed to cancel subscription on Paystack"),
+    },
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def cancel_subscription_api(request):
