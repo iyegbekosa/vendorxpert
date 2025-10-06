@@ -1494,6 +1494,22 @@ def order_history_api(request):
         items_data = []
 
         for item in order_items:
+            # Check if the user has reviewed this product
+            user_review = Review.objects.filter(
+                product=item.product, author=user_profile
+            ).first()
+
+            review_data = None
+            if user_review:
+                review_data = {
+                    "id": user_review.pk,
+                    "rating": user_review.rating,
+                    "text": user_review.text,
+                    "subject": user_review.subject,
+                    "created_date": user_review.created_date.isoformat(),
+                    "approved_review": user_review.approved_review,
+                }
+
             items_data.append(
                 {
                     "product": {
@@ -1506,6 +1522,7 @@ def order_history_api(request):
                     "quantity": item.quantity,
                     "price": item.price,
                     "fulfilled": item.fulfilled,
+                    "my_review": review_data,
                 }
             )
 
