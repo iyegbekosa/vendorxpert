@@ -50,11 +50,34 @@ class CustomAccountManager(BaseUserManager):
 
 
 class UserProfile(AbstractBaseUser, PermissionsMixin):
+    HOSTEL_CHOICES = [
+        ("hall_1", "Hall 1"),
+        ("hall_2", "Hall 2"),
+        ("hall_3", "Hall 3"),
+        ("hall_4", "Hall 4"),
+        ("hall_5", "Hall 5"),
+        ("hall_6", "Hall 6"),
+        ("hall_7", "Hall 7"),
+        ("hall_8", "Hall 8"),
+    ]
 
     email = models.EmailField(_("email address"), unique=True)
     user_name = models.CharField(max_length=150, unique=True)
     first_name = models.CharField(max_length=150, blank=True)
     last_name = models.CharField(max_length=150, blank=True)
+    hostel = models.CharField(
+        max_length=20,
+        choices=HOSTEL_CHOICES,
+        blank=True,
+        null=True,
+        help_text="Select your hostel",
+    )
+    profile_picture = models.ImageField(
+        upload_to="profile_pictures/",
+        blank=True,
+        null=True,
+        help_text="Upload your profile picture",
+    )
     start_date = models.DateTimeField(default=timezone.now)
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)

@@ -4,6 +4,9 @@ from rest_framework import status
 from django.contrib.auth import login
 from .serializers import (
     SignupSerializer,
+    UserProfileSerializer,
+    ProfileUpdateSerializer,
+    ProfilePictureUploadSerializer,
     VendorRegisterSerializer,
     VendorProfileSerializer,
     VendorListSerializer,
@@ -166,6 +169,289 @@ def login_api(request):
         return Response(
             {"error": "Invalid email or password"}, status=status.HTTP_400_BAD_REQUEST
         )
+
+
+@swagger_auto_schema(
+    methods=["get"],
+    operation_description="Get current user's profile details",
+    operation_summary="Get user profile",
+    responses={
+        200: openapi.Response(
+            description="Profile retrieved successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "user_name": openapi.Schema(type=openapi.TYPE_STRING),
+                    "email": openapi.Schema(type=openapi.TYPE_STRING),
+                    "first_name": openapi.Schema(type=openapi.TYPE_STRING),
+                    "last_name": openapi.Schema(type=openapi.TYPE_STRING),
+                    "hostel": openapi.Schema(type=openapi.TYPE_STRING),
+                    "profile_picture": openapi.Schema(type=openapi.TYPE_STRING),
+                    "start_date": openapi.Schema(type=openapi.TYPE_STRING),
+                    "is_vendor": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "vendor_info": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        description="Vendor details if user is a vendor, null otherwise",
+                    ),
+                },
+            ),
+        ),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Profile"],
+)
+@swagger_auto_schema(
+    methods=["put"],
+    operation_description="Update current user's profile (excluding profile picture)",
+    operation_summary="Update user profile",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            "first_name": openapi.Schema(
+                type=openapi.TYPE_STRING, description="User's first name"
+            ),
+            "last_name": openapi.Schema(
+                type=openapi.TYPE_STRING, description="User's last name"
+            ),
+            "hostel": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="Hostel selection (hall_1 to hall_8)",
+                enum=[
+                    "hall_1",
+                    "hall_2",
+                    "hall_3",
+                    "hall_4",
+                    "hall_5",
+                    "hall_6",
+                    "hall_7",
+                    "hall_8",
+                ],
+            ),
+        },
+    ),
+    responses={
+        200: openapi.Response(
+            description="Profile updated successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "profile": openapi.Schema(type=openapi.TYPE_OBJECT),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid data provided"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Profile"],
+)
+@api_view(["GET", "PUT"])
+@permission_classes([IsAuthenticated])
+def profile_api(request):
+    """
+    Get or update current user's profile details (excluding profile picture).
+
+    GET: Returns comprehensive profile information including vendor details if applicable.
+    PUT: Updates profile information (name, hostel) - use separate endpoint for profile picture.
+    """
+    if request.method == "GET":
+        serializer = UserProfileSerializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    elif request.method == "PUT":
+        serializer = ProfileUpdateSerializer(
+            request.user, data=request.data, partial=True
+        )
+        if serializer.is_valid():
+            serializer.save()
+            # Return updated profile using the full profile serializer
+            updated_profile = UserProfileSerializer(request.user)
+            return Response(
+                {
+                    "message": "Profile updated successfully",
+                    "profile": updated_profile.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Upload or update user's profile picture. Accepts either 'picture' or 'profile_picture' field name.",
+    operation_summary="Upload profile picture",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            "profile_picture": openapi.Schema(
+                type=openapi.TYPE_FILE,
+                description="Profile picture image file (max 5MB, JPG/PNG/GIF/SVG)",
+            ),
+            "picture": openapi.Schema(
+                type=openapi.TYPE_FILE,
+                description="Alternative field name for profile picture (same as profile_picture, max 5MB, JPG/PNG/GIF/SVG)",
+            ),
+        },
+        required=["profile_picture"],
+        description="Use either 'profile_picture' or 'picture' field name for the image file",
+    ),
+    responses={
+        200: openapi.Response(
+            description="Profile picture uploaded successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "profile_picture_url": openapi.Schema(type=openapi.TYPE_STRING),
+                    "profile": openapi.Schema(type=openapi.TYPE_OBJECT),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid file or validation error"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Profile"],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def upload_profile_picture_api(request):
+    """
+    Upload or update the authenticated user's profile picture.
+
+    Supports image files with validation for file size (max 5MB) and format (JPG, PNG, GIF, SVG).
+    Replaces any existing profile picture.
+    """
+    # Handle both 'picture' and 'profile_picture' field names for file uploads
+    upload_data = {}
+
+    # Check for file in request.FILES (which preserves file objects)
+    if "picture" in request.FILES:
+        upload_data["profile_picture"] = request.FILES["picture"]
+    elif "profile_picture" in request.FILES:
+        upload_data["profile_picture"] = request.FILES["profile_picture"]
+    else:
+        # Also check request.data for backward compatibility
+        if "picture" in request.data:
+            upload_data["profile_picture"] = request.data["picture"]
+        elif "profile_picture" in request.data:
+            upload_data["profile_picture"] = request.data["profile_picture"]
+
+    serializer = ProfilePictureUploadSerializer(
+        request.user, data=upload_data, partial=True
+    )
+
+    if serializer.is_valid():
+        # Debug: Check what data is being passed
+        print(f"DEBUG: Request FILES: {request.FILES}")
+        print(f"DEBUG: Request data: {request.data}")
+        print(f"DEBUG: Upload data: {upload_data}")
+        print(f"DEBUG: Serializer validated data: {serializer.validated_data}")
+
+        # Delete old profile picture if it exists
+        if request.user.profile_picture:
+            try:
+                import os
+
+                if os.path.isfile(request.user.profile_picture.path):
+                    os.remove(request.user.profile_picture.path)
+            except (ValueError, FileNotFoundError):
+                # File doesn't exist or path is invalid, continue
+                pass
+
+        # Save new profile picture
+        serializer.save()
+
+        # Debug: Check after save
+        print(f"DEBUG: User profile picture after save: {request.user.profile_picture}")
+
+        # Refresh user instance from database to get updated profile picture
+        request.user.refresh_from_db()
+
+        # Debug: Check after refresh
+        print(
+            f"DEBUG: User profile picture after refresh: {request.user.profile_picture}"
+        )
+
+        # Return updated profile information
+        updated_profile = UserProfileSerializer(request.user)
+
+        return Response(
+            {
+                "message": "Profile picture uploaded successfully",
+                "profile_picture_url": (
+                    request.user.profile_picture.url
+                    if request.user.profile_picture
+                    else None
+                ),
+                "profile": updated_profile.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    print(f"DEBUG: Serializer errors: {serializer.errors}")
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@swagger_auto_schema(
+    method="delete",
+    operation_description="Remove user's profile picture",
+    operation_summary="Remove profile picture",
+    responses={
+        200: openapi.Response(
+            description="Profile picture removed successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "profile": openapi.Schema(type=openapi.TYPE_OBJECT),
+                },
+            ),
+        ),
+        404: openapi.Response(description="No profile picture to remove"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Profile"],
+)
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def remove_profile_picture_api(request):
+    """
+    Remove the authenticated user's profile picture.
+
+    Sets the profile_picture field to None and deletes the file from storage.
+    """
+    if not request.user.profile_picture:
+        return Response(
+            {"message": "No profile picture to remove"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Delete the file from storage
+    try:
+        import os
+
+        if os.path.isfile(request.user.profile_picture.path):
+            os.remove(request.user.profile_picture.path)
+    except (ValueError, FileNotFoundError):
+        # File doesn't exist or path is invalid, continue
+        pass
+
+    # Clear the profile picture field
+    request.user.profile_picture = None
+    request.user.save()
+
+    # Return updated profile information
+    updated_profile = UserProfileSerializer(request.user)
+
+    return Response(
+        {
+            "message": "Profile picture removed successfully",
+            "profile": updated_profile.data,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @swagger_auto_schema(

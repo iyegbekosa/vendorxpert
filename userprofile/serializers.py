@@ -9,6 +9,131 @@ from django.utils import timezone
 from store.utils import create_paystack_subaccount
 
 
+class UserProfileSerializer(serializers.ModelSerializer):
+    """Serializer for user profile details"""
+
+    vendor_info = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserProfile
+        fields = [
+            "id",
+            "user_name",
+            "email",
+            "first_name",
+            "last_name",
+            "hostel",
+            "profile_picture",
+            "start_date",
+            "is_vendor",
+            "vendor_info",
+        ]
+
+    def get_vendor_info(self, obj):
+        """Get vendor information if user is a vendor"""
+        if hasattr(obj, "vendor_profile"):
+            vendor = obj.vendor_profile
+            return {
+                "id": vendor.id,
+                "store_name": vendor.store_name,
+                "store_description": vendor.store_description,
+                "phone_number": (
+                    str(vendor.phone_number) if vendor.phone_number else None
+                ),
+                "whatsapp_number": (
+                    str(vendor.whatsapp_number) if vendor.whatsapp_number else None
+                ),
+                "instagram_handle": vendor.instagram_handle,
+                "tiktok_handle": vendor.tiktok_handle,
+                "is_verified": vendor.is_verified,
+                "subscription_status": vendor.subscription_status,
+                "subscription_start": vendor.subscription_start,
+                "subscription_expiry": vendor.subscription_expiry,
+            }
+        return None
+
+
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating user profile information (excluding profile picture)"""
+
+    class Meta:
+        model = UserProfile
+        fields = [
+            "first_name",
+            "last_name",
+            "hostel",
+        ]
+        extra_kwargs = {
+            "first_name": {"required": False},
+            "last_name": {"required": False},
+            "hostel": {"required": False},
+        }
+
+    def validate_hostel(self, value):
+        """Validate hostel choice"""
+        if value and value not in [choice[0] for choice in UserProfile.HOSTEL_CHOICES]:
+            raise serializers.ValidationError(
+                f"Invalid hostel choice. Must be one of: {[choice[0] for choice in UserProfile.HOSTEL_CHOICES]}"
+            )
+        return value
+
+
+class ProfilePictureUploadSerializer(serializers.ModelSerializer):
+    """Dedicated serializer for profile picture uploads"""
+
+    class Meta:
+        model = UserProfile
+        fields = ["profile_picture"]
+        extra_kwargs = {
+            "profile_picture": {
+                "required": True,
+                "help_text": "Upload a profile picture (JPG, PNG, GIF, SVG supported)",
+            },
+        }
+
+    def validate_profile_picture(self, value):
+        """Validate uploaded profile picture"""
+        if value:
+            # Check file size (limit to 5MB)
+            if value.size > 5 * 1024 * 1024:
+                raise serializers.ValidationError(
+                    "Profile picture file size cannot exceed 5MB."
+                )
+
+            # Check file type
+            valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg"]
+            import os
+
+            ext = os.path.splitext(value.name)[1].lower()
+            if ext not in valid_extensions:
+                raise serializers.ValidationError(
+                    f"Invalid file type. Supported formats: {', '.join(valid_extensions)}"
+                )
+
+            # Additional validation for SVG files
+            if ext == ".svg":
+                # Basic SVG content validation
+                try:
+                    content = value.read()
+                    value.seek(0)  # Reset file pointer
+
+                    # Check if it's a valid SVG by looking for SVG tags
+                    content_str = content.decode("utf-8", errors="ignore")
+                    if not (
+                        "<svg" in content_str.lower()
+                        and "</svg>" in content_str.lower()
+                    ):
+                        raise serializers.ValidationError(
+                            "Invalid SVG file. File must contain valid SVG content."
+                        )
+                except Exception:
+                    raise serializers.ValidationError(
+                        "Invalid SVG file. Unable to process the file."
+                    )
+
+        return value
+
+
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
     first_name = serializers.CharField(max_length=150, required=True, allow_blank=False)

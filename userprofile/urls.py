@@ -26,6 +26,17 @@ urlpatterns = [
 urlpatterns += [
     path("api/signup/", api_views.signup_api, name="signup_api"),
     path("api/login", api_views.login_api, name="login_api"),
+    path("api/profile/", api_views.profile_api, name="profile_api"),
+    path(
+        "api/profile/picture/",
+        api_views.upload_profile_picture_api,
+        name="upload_profile_picture_api",
+    ),
+    path(
+        "api/profile/picture/remove/",
+        api_views.remove_profile_picture_api,
+        name="remove_profile_picture_api",
+    ),
     path(
         "api/register-vendor/",
         api_views.register_vendor_api,
