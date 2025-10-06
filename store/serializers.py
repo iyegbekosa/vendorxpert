@@ -46,6 +46,22 @@ class ReviewSerializer(serializers.ModelSerializer):
         fields = ["rating", "text"]
 
 
+class ReviewDetailSerializer(serializers.ModelSerializer):
+    author_name = serializers.CharField(source="author.user_name", read_only=True)
+
+    class Meta:
+        model = Review
+        fields = [
+            "id",
+            "rating",
+            "text",
+            "subject",
+            "author_name",
+            "created_date",
+            "approved_review",
+        ]
+
+
 class CartItemSerializer(serializers.Serializer):
     product = serializers.SerializerMethodField()
     quantity = serializers.IntegerField()

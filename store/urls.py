@@ -37,6 +37,11 @@ urlpatterns += [
     path("api/search/", api_views.search_api, name="search_api"),
     path("api/add-review/<int:pk>/", api_views.add_review_api, name="add_review_api"),
     path(
+        "api/product/<int:pk>/reviews/",
+        api_views.get_product_reviews_api,
+        name="get_product_reviews_api",
+    ),
+    path(
         "api/delete-review/<int:review_id>/",
         api_views.delete_review_api,
         name="delete_review_api",

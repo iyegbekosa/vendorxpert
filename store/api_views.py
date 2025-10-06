@@ -3,11 +3,11 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Product, Category, Payment, OrderItem
+from .models import Product, Category, Payment, OrderItem, Review, Order
 from .serializers import (
     ProductSerializer,
     ReviewSerializer,
-    Review,
+    ReviewDetailSerializer,
     CartItemSerializer,
     CheckoutSerializer,
 )
@@ -378,6 +378,64 @@ def delete_review_api(request, review_id):
     return Response(
         {"success": "Review deleted successfully."}, status=status.HTTP_204_NO_CONTENT
     )
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_description="Get all reviews for a specific product",
+    manual_parameters=[
+        openapi.Parameter(
+            "pk",
+            openapi.IN_PATH,
+            description="Product ID",
+            type=openapi.TYPE_INTEGER,
+        ),
+        openapi.Parameter(
+            "page",
+            openapi.IN_QUERY,
+            description="Page number for pagination",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Paginated list of product reviews",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "next": openapi.Schema(type=openapi.TYPE_STRING, format="uri"),
+                    "previous": openapi.Schema(type=openapi.TYPE_STRING, format="uri"),
+                    "results": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                },
+            ),
+        ),
+        404: openapi.Response(description="Product not found"),
+    },
+    tags=["Reviews"],
+)
+@api_view(["GET"])
+def get_product_reviews_api(request, pk):
+    """
+    Get all reviews for a specific product.
+
+    Returns a paginated list of all approved reviews for the specified product.
+    """
+    product = get_object_or_404(Product, pk=pk)
+    reviews = Review.objects.filter(product=product, approved_review=True).order_by(
+        "-created_date"
+    )
+
+    paginator = StandardResultsPagination()
+    result_page = paginator.paginate_queryset(reviews, request)
+
+    serializer = ReviewDetailSerializer(result_page, many=True)
+
+    return paginator.get_paginated_response(serializer.data)
 
 
 @swagger_auto_schema(
@@ -1431,6 +1489,7 @@ def order_history_api(request):
             items_data.append(
                 {
                     "product": {
+                        "id": item.product.pk,
                         "title": item.product.title,
                         "slug": item.product.slug,
                         "price": item.product.price,
