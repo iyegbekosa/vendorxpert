@@ -32,6 +32,11 @@ urlpatterns += [
         name="get_product_reviews_api",
     ),
     path(
+        "api/edit-review/<int:review_id>/",
+        api_views.edit_review_api,
+        name="edit_review_api",
+    ),
+    path(
         "api/delete-review/<int:review_id>/",
         api_views.delete_review_api,
         name="delete_review_api",

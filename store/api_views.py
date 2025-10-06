@@ -381,6 +381,64 @@ def delete_review_api(request, review_id):
 
 
 @swagger_auto_schema(
+    method="put",
+    operation_description="Edit/update an existing review",
+    request_body=ReviewSerializer,
+    manual_parameters=[
+        openapi.Parameter(
+            "review_id",
+            openapi.IN_PATH,
+            description="Review ID to edit",
+            type=openapi.TYPE_INTEGER,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Review successfully updated",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid data"),
+        401: openapi.Response(description="Authentication required"),
+        403: openapi.Response(description="Not authorized to edit this review"),
+        404: openapi.Response(description="Review not found"),
+    },
+    tags=["Reviews"],
+)
+@api_view(["PUT"])
+@permission_classes([IsAuthenticated])
+def edit_review_api(request, review_id):
+    """
+    Edit/update an existing review.
+
+    Only the author of the review can edit it. Allows updating rating, text, and subject.
+    """
+    review = get_object_or_404(Review, id=review_id)
+
+    if review.author != request.user:
+        return Response(
+            {"error": "You are not authorized to edit this review."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    serializer = ReviewSerializer(review, data=request.data, partial=True)
+
+    if serializer.is_valid():
+        serializer.save()
+        return Response(
+            {"success": True, "message": "Review updated successfully."},
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@swagger_auto_schema(
     method="get",
     operation_description="Get all reviews for a specific product",
     manual_parameters=[
