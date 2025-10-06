@@ -425,10 +425,18 @@ def get_product_reviews_api(request, pk):
 
     Returns a paginated list of all approved reviews for the specified product.
     """
-    product = get_object_or_404(Product, pk=pk)
+    print(f"Debug: Looking for product with pk={pk}, type={type(pk)}")
+    try:
+        product = Product.objects.get(pk=pk)
+        print(f"Debug: Found product: {product}")
+    except Product.DoesNotExist:
+        print(f"Debug: Product with pk={pk} does not exist")
+        return Response({"error": f"Product with ID {pk} not found"}, status=404)
+
     reviews = Review.objects.filter(product=product, approved_review=True).order_by(
         "-created_date"
     )
+    print(f"Debug: Found {reviews.count()} reviews")
 
     paginator = StandardResultsPagination()
     result_page = paginator.paginate_queryset(reviews, request)
