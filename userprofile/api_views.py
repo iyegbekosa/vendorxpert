@@ -23,7 +23,7 @@ from store.utils import create_paystack_subaccount
 from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
-from store.models import OrderItem, Order, Payment
+from store.models import OrderItem, Order, Payment, Review
 from .views import get_object_or_404
 from store.pagination import StandardResultsPagination
 from .permissions import can_create_product, HasActiveSubscription, VendorFeatureAccess
@@ -1502,6 +1502,162 @@ def vendor_plans_api(request):
     plans = VendorPlan.objects.filter(is_active=True).order_by("price")
     serializer = VendorPlanSerializer(plans, many=True)
     return Response(serializer.data, status=200)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get Vendor KPIs",
+    operation_description="Get key performance indicators for the authenticated vendor including ratings, sales, reviews, and subscription details.",
+    security=[{"Bearer": []}],
+    responses={
+        200: openapi.Response(
+            description="Vendor KPIs retrieved successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "vendor_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "store_name": openapi.Schema(type=openapi.TYPE_STRING),
+                    "ratings": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "average_rating": openapi.Schema(type=openapi.TYPE_NUMBER),
+                            "total_reviews": openapi.Schema(type=openapi.TYPE_INTEGER),
+                            "rating_breakdown": openapi.Schema(
+                                type=openapi.TYPE_OBJECT
+                            ),
+                        },
+                    ),
+                    "sales": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "total_orders": openapi.Schema(type=openapi.TYPE_INTEGER),
+                            "total_revenue": openapi.Schema(type=openapi.TYPE_NUMBER),
+                            "total_products_sold": openapi.Schema(
+                                type=openapi.TYPE_INTEGER
+                            ),
+                        },
+                    ),
+                    "products": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "total_products": openapi.Schema(type=openapi.TYPE_INTEGER),
+                            "active_products": openapi.Schema(
+                                type=openapi.TYPE_INTEGER
+                            ),
+                            "out_of_stock": openapi.Schema(type=openapi.TYPE_INTEGER),
+                        },
+                    ),
+                    "subscription": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "status": openapi.Schema(type=openapi.TYPE_STRING),
+                            "days_remaining": openapi.Schema(type=openapi.TYPE_INTEGER),
+                            "plan_name": openapi.Schema(type=openapi.TYPE_STRING),
+                            "expires_at": openapi.Schema(type=openapi.TYPE_STRING),
+                        },
+                    ),
+                },
+            ),
+        ),
+        403: openapi.Response(description="User is not a vendor"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Vendor KPIs"],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, VendorFeatureAccess])
+def vendor_kpis_api(request):
+    """
+    Get comprehensive KPIs for the authenticated vendor.
+
+    Returns key metrics including:
+    - Average rating and review statistics
+    - Sales data (orders, revenue, products sold)
+    - Product statistics
+    - Subscription details and days remaining
+    """
+    try:
+        vendor = request.user.vendor_profile
+    except AttributeError:
+        return Response(
+            {"error": "User is not a vendor"}, status=status.HTTP_403_FORBIDDEN
+        )
+
+    # Get all vendor's products
+    vendor_products = Product.objects.filter(vendor=vendor)
+
+    # Rating and Review Statistics
+    from django.db.models import Avg, Count, Sum
+
+    all_reviews = Review.objects.filter(product__vendor=vendor, approved_review=True)
+    rating_stats = all_reviews.aggregate(
+        average_rating=Avg("rating"), total_reviews=Count("id")
+    )
+
+    # Rating breakdown
+    rating_breakdown = {
+        "5_star": all_reviews.filter(rating=5).count(),
+        "4_star": all_reviews.filter(rating=4).count(),
+        "3_star": all_reviews.filter(rating=3).count(),
+        "2_star": all_reviews.filter(rating=2).count(),
+        "1_star": all_reviews.filter(rating=1).count(),
+    }
+
+    # Sales Statistics
+    vendor_order_items = OrderItem.objects.filter(
+        product__vendor=vendor, order__is_paid=True
+    )
+
+    sales_stats = vendor_order_items.aggregate(
+        total_orders=Count("order", distinct=True),
+        total_revenue=Sum("price"),
+        total_products_sold=Sum("quantity"),
+    )
+
+    # Product Statistics
+    product_stats = {
+        "total_products": vendor_products.count(),
+        "active_products": vendor_products.filter(status=Product.ACTIVE).count(),
+        "out_of_stock": vendor_products.filter(stock=Product.OUT_OF_STOCK).count(),
+    }
+
+    # Subscription Information
+    now = timezone.now()
+    days_remaining = 0
+    if vendor.subscription_expiry:
+        time_diff = vendor.subscription_expiry - now
+        days_remaining = max(0, time_diff.days)
+
+    subscription_info = {
+        "status": vendor.subscription_status,
+        "days_remaining": days_remaining,
+        "plan_name": vendor.plan.name if vendor.plan else None,
+        "expires_at": (
+            vendor.subscription_expiry.isoformat()
+            if vendor.subscription_expiry
+            else None
+        ),
+    }
+
+    # Response data
+    kpis_data = {
+        "vendor_id": vendor.id,
+        "store_name": vendor.store_name,
+        "ratings": {
+            "average_rating": round(rating_stats["average_rating"] or 0, 1),
+            "total_reviews": rating_stats["total_reviews"] or 0,
+            "rating_breakdown": rating_breakdown,
+        },
+        "sales": {
+            "total_orders": sales_stats["total_orders"] or 0,
+            "total_revenue": float(sales_stats["total_revenue"] or 0),
+            "total_products_sold": sales_stats["total_products_sold"] or 0,
+        },
+        "products": product_stats,
+        "subscription": subscription_info,
+    }
+
+    return Response(kpis_data, status=status.HTTP_200_OK)
 
 
 @swagger_auto_schema(

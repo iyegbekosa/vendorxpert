@@ -70,6 +70,7 @@ urlpatterns += [
         name="toggle_fulfillment_api",
     ),
     path("api/vendor-plans/", api_views.vendor_plans_api, name="vendor_plans_api"),
+    path("api/vendor-kpis/", api_views.vendor_kpis_api, name="vendor_kpis_api"),
     path(
         "api/my-subscription/",
         api_views.my_subscription_status_api,
