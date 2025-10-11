@@ -504,6 +504,7 @@ def remove_profile_picture_api(request):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
 @transaction.atomic
 def register_vendor_api(request):
     """
@@ -533,6 +534,11 @@ def register_vendor_api(request):
                 "vendor_id": vendor.id,
                 "message": "Vendor account created successfully",
                 "store_name": vendor.store_name,
+                "store_logo_url": (
+                    vendor.store_logo.url
+                    if getattr(vendor, "store_logo", None)
+                    else None
+                ),
                 "subscription_expiry": (
                     vendor.subscription_expiry.isoformat()
                     if vendor.subscription_expiry

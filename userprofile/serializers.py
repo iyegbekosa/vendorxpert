@@ -7,6 +7,10 @@ from django.utils.text import slugify
 from datetime import timedelta
 from django.utils import timezone
 from store.utils import create_paystack_subaccount
+import requests
+from django.core.files.base import ContentFile
+from urllib.parse import urlparse
+import os
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -172,6 +176,24 @@ class SignupSerializer(serializers.ModelSerializer):
 
 
 class VendorRegisterSerializer(serializers.ModelSerializer):
+    # Store logo can be either a URL string or an uploaded file
+    store_logo = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="URL to a logo image (optional when sending JSON)",
+    )
+
+    def to_internal_value(self, data):
+        # If store_logo is a file upload, remove it from data so CharField doesn't validate it
+        # We'll handle the file in create() method
+        request = self.context.get("request")
+        if request and hasattr(request, "FILES") and "store_logo" in request.FILES:
+            # Make a copy of data and remove store_logo to avoid CharField validation
+            data = data.copy() if hasattr(data, "copy") else dict(data)
+            data.pop("store_logo", None)
+
+        return super().to_internal_value(data)
+
     store_name = serializers.CharField(
         max_length=255, help_text="The name of your store (required)"
     )
@@ -193,6 +215,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = VendorProfile
         fields = [
+            "store_logo",
             "store_name",
             "account_number",
             "bank_code",
@@ -324,8 +347,15 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context["request"]
+        # Extract and remove fields we will handle manually
         account_number = validated_data.pop("account_number")
         bank_code = validated_data.pop("bank_code")
+        store_logo_url = validated_data.pop("store_logo", None)
+
+        # Check if an uploaded file was provided (multipart/form-data)
+        file_logo = None
+        if hasattr(request, "FILES") and request.FILES.get("store_logo"):
+            file_logo = request.FILES.get("store_logo")
 
         # Handle phone numbers - only set if provided and not empty
         phone_number = validated_data.pop("phone_number", None)
@@ -372,6 +402,59 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
             vendor = VendorProfile.objects.create(**vendor_data)
 
+            # If a file was uploaded, validate and save it. Otherwise, try the URL path.
+            if file_logo:
+                # Basic validation: size and extension
+                max_size = 5 * 1024 * 1024
+                if hasattr(file_logo, "size") and file_logo.size > max_size:
+                    raise serializers.ValidationError(
+                        {"store_logo": ["File size cannot exceed 5MB."]}
+                    )
+
+                valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg"]
+                name = getattr(file_logo, "name", "store_logo")
+                ext = os.path.splitext(name)[1].lower()
+                if ext == "" and hasattr(file_logo, "content_type"):
+                    # attempt to infer extension from content_type (very basic)
+                    if file_logo.content_type == "image/svg+xml":
+                        ext = ".svg"
+
+                if ext not in valid_extensions:
+                    raise serializers.ValidationError(
+                        {
+                            "store_logo": [
+                                f"Unsupported file type '{ext}'. Supported: {', '.join(valid_extensions)}"
+                            ]
+                        }
+                    )
+
+                # Save uploaded file to ImageField
+                vendor.store_logo.save(name, file_logo, save=True)
+
+            elif store_logo_url:
+                try:
+                    resp = requests.get(store_logo_url, timeout=6)
+                    if resp.status_code == 200:
+                        parsed = urlparse(store_logo_url)
+                        filename = (
+                            os.path.basename(parsed.path)
+                            or f"store_logo_{vendor.pk}.png"
+                        )
+                        # Ensure filename has an extension
+                        if not os.path.splitext(filename)[1]:
+                            filename = f"{filename}.png"
+                        vendor.store_logo.save(
+                            filename, ContentFile(resp.content), save=True
+                        )
+                    else:
+                        print(
+                            f"[userprofile] Failed to fetch store_logo from {store_logo_url}: HTTP {resp.status_code}"
+                        )
+                except Exception as logo_exc:
+                    print(
+                        f"[userprofile] Error fetching store_logo from {store_logo_url}: {logo_exc}"
+                    )
+
             # Step 3: Mark the user as a vendor
             request.user.is_vendor = True
             request.user.save()
@@ -380,18 +463,10 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
             try:
                 create_paystack_subaccount(vendor, account_number, bank_code)
             except Exception as paystack_error:
-                # If Paystack fails, we still have the vendor but log the error
-                # The vendor can retry linking their account later
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.error(
-                    f"Failed to create Paystack subaccount for vendor {vendor.pk}: {paystack_error}"
+                # If Paystack fails, we still have the vendor. Print error so devs see it.
+                print(
+                    f"[userprofile] Failed to create Paystack subaccount for vendor {vendor.pk}: {paystack_error}"
                 )
-
-                # You could also set a flag to indicate incomplete setup
-                # vendor.paystack_setup_complete = False
-                # vendor.save()
 
                 # Don't raise the error - let the vendor registration succeed
                 pass
