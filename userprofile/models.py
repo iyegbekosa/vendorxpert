@@ -129,7 +129,6 @@ class VendorProfile(models.Model):
         max_length=100, unique=True, null=True, blank=True
     )
     paystack_subscription_code = models.CharField(max_length=100, blank=True, null=True)
-    paystack_subscription_code = models.CharField(max_length=100, blank=True, null=True)
     subscription_token = models.CharField(max_length=255, blank=True, null=True)
     pending_ref = models.CharField(max_length=50, blank=True, null=True)
     whatsapp_number = PhoneNumberField(unique=True, null=True, blank=True)
@@ -142,19 +141,240 @@ class VendorProfile(models.Model):
     subscription_status = models.CharField(
         max_length=50,
         choices=(
+            ("trial", "Trial Period"),
             ("active", "Active"),
             ("grace", "Grace Period"),
-            ("defaulted", "Defaulted"),
+            ("paused", "Paused"),
+            ("defaulted", "Payment Failed"),
             ("cancelled", "Cancelled"),
+            ("expired", "Expired"),
         ),
-        default="active",
+        default="trial",
     )
     last_payment_date = models.DateTimeField(null=True, blank=True)
+    trial_start = models.DateTimeField(null=True, blank=True)
+    trial_end = models.DateTimeField(null=True, blank=True)
+    pause_reason = models.CharField(max_length=255, blank=True, null=True)
+    paused_at = models.DateTimeField(null=True, blank=True)
+    failed_payment_count = models.PositiveIntegerField(default=0)
 
     def __str__(self):
         return f"{self.store_name} (Vendor: {self.user.user_name})"
 
     def is_subscription_active(self):
+        """Check if subscription provides active access"""
+        if self.subscription_status == "cancelled":
+            return False
+
+        if self.subscription_status == "trial":
+            if self.trial_end:
+                return timezone.now() <= self.trial_end
+            return True  # Unlimited trial if no end date set
+
+        if self.subscription_status == "paused":
+            return True  # Paused subscriptions maintain access
+
+        if not self.subscription_expiry:
+            return self.subscription_status == "active"
+
+        now = timezone.now()
+        # Active period or grace period (7 days after expiry)
+        return self.subscription_status in ["active", "grace"] and (
+            now <= self.subscription_expiry
+            or now <= self.subscription_expiry + timedelta(days=7)
+        )
+
+    def get_subscription_days_remaining(self):
+        """Get days remaining in subscription"""
+        if self.subscription_status == "trial" and self.trial_end:
+            return max(0, (self.trial_end - timezone.now()).days)
+        elif self.subscription_expiry:
+            return max(0, (self.subscription_expiry - timezone.now()).days)
+        return 0
+
+    def is_in_grace_period(self):
+        """Check if subscription is in grace period"""
         if not self.subscription_expiry:
             return False
-        return timezone.now() <= self.subscription_expiry + timedelta(days=7)
+        now = timezone.now()
+        return (
+            now > self.subscription_expiry
+            and now <= self.subscription_expiry + timedelta(days=7)
+        )
+
+    def start_trial(self, days=14):
+        """Start a trial period for the vendor"""
+        self.subscription_status = "trial"
+        self.trial_start = timezone.now()
+        self.trial_end = timezone.now() + timedelta(days=days)
+        self.save()
+
+        # Log the event (import will be available after model definition)
+        SubscriptionHistory.log_event(
+            vendor=self,
+            event_type="trial_started",
+            notes=f"Started {days}-day trial period",
+        )
+
+    def pause_subscription(self, reason=""):
+        """Pause the subscription"""
+        if self.subscription_status not in ["active", "grace"]:
+            return False
+
+        old_status = self.subscription_status
+        self.subscription_status = "paused"
+        self.pause_reason = reason
+        self.paused_at = timezone.now()
+        self.save()
+
+        # Log the event
+        SubscriptionHistory.log_event(
+            vendor=self,
+            event_type="subscription_paused",
+            previous_status=old_status,
+            new_status="paused",
+            notes=reason,
+        )
+        return True
+
+    def resume_subscription(self):
+        """Resume a paused subscription"""
+        if self.subscription_status != "paused":
+            return False
+
+        self.subscription_status = "active"
+        self.pause_reason = ""
+        self.paused_at = None
+        self.save()
+
+        # Log the event
+        SubscriptionHistory.log_event(
+            vendor=self,
+            event_type="subscription_resumed",
+            previous_status="paused",
+            new_status="active",
+        )
+        return True
+
+    def change_plan(self, new_plan, immediate=False):
+        """Change subscription plan with optional prorated billing"""
+        if not new_plan or new_plan == self.plan:
+            return False
+
+        old_plan = self.plan
+        is_upgrade = new_plan.price > (old_plan.price if old_plan else 0)
+
+        # Calculate prorated amount if changing mid-cycle
+        prorated_amount = 0
+        if self.subscription_expiry and not immediate:
+            days_remaining = self.get_subscription_days_remaining()
+            if days_remaining > 0:
+                daily_old_rate = (old_plan.price if old_plan else 0) / 30
+                daily_new_rate = new_plan.price / 30
+                prorated_amount = (daily_new_rate - daily_old_rate) * days_remaining
+
+        # Update plan
+        self.plan = new_plan
+        self.save()
+
+        # Log the event
+        event_type = "plan_upgraded" if is_upgrade else "plan_downgraded"
+        SubscriptionHistory.log_event(
+            vendor=self,
+            event_type=event_type,
+            previous_plan=old_plan,
+            new_plan=new_plan,
+            amount=prorated_amount,
+            notes=f"Plan changed from {old_plan.name if old_plan else 'None'} to {new_plan.name}",
+        )
+
+        return {
+            "success": True,
+            "prorated_amount": prorated_amount,
+            "is_upgrade": is_upgrade,
+            "old_plan": old_plan.name if old_plan else None,
+            "new_plan": new_plan.name,
+        }
+
+    def extend_subscription(self, days=30):
+        """Extend subscription by specified days"""
+        if self.subscription_expiry:
+            # If subscription is still active, extend from expiry date
+            if timezone.now() <= self.subscription_expiry:
+                self.subscription_expiry += timedelta(days=days)
+            else:
+                # If expired, extend from now
+                self.subscription_expiry = timezone.now() + timedelta(days=days)
+        else:
+            # No expiry set, create one
+            self.subscription_expiry = timezone.now() + timedelta(days=days)
+
+        self.subscription_status = "active"
+        self.last_payment_date = timezone.now()
+        self.failed_payment_count = 0  # Reset failed payment count
+        self.save()
+
+        # Log the event
+        SubscriptionHistory.log_event(
+            vendor=self,
+            event_type="subscription_renewed",
+            notes=f"Subscription extended by {days} days",
+        )
+
+
+class SubscriptionHistory(models.Model):
+    """Track all subscription-related events and changes"""
+
+    EVENT_TYPES = (
+        ("subscription_created", "Subscription Created"),
+        ("plan_upgraded", "Plan Upgraded"),
+        ("plan_downgraded", "Plan Downgraded"),
+        ("payment_success", "Payment Successful"),
+        ("payment_failed", "Payment Failed"),
+        ("subscription_renewed", "Subscription Renewed"),
+        ("subscription_paused", "Subscription Paused"),
+        ("subscription_resumed", "Subscription Resumed"),
+        ("subscription_cancelled", "Subscription Cancelled"),
+        ("trial_started", "Trial Started"),
+        ("trial_ended", "Trial Ended"),
+        ("grace_period_started", "Grace Period Started"),
+        ("subscription_expired", "Subscription Expired"),
+    )
+
+    vendor = models.ForeignKey(
+        VendorProfile, on_delete=models.CASCADE, related_name="subscription_history"
+    )
+    event_type = models.CharField(max_length=50, choices=EVENT_TYPES)
+    previous_plan = models.ForeignKey(
+        VendorPlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="previous_subscriptions",
+    )
+    new_plan = models.ForeignKey(
+        VendorPlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="new_subscriptions",
+    )
+    previous_status = models.CharField(max_length=50, blank=True)
+    new_status = models.CharField(max_length=50, blank=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    payment_reference = models.CharField(max_length=100, blank=True)
+    paystack_response = models.JSONField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name_plural = "Subscription History"
+
+    def __str__(self):
+        return f"{self.vendor.store_name} - {self.event_type} at {self.created_at}"
+
+    @classmethod
+    def log_event(cls, vendor, event_type, **kwargs):
+        """Helper method to log subscription events"""
+        return cls.objects.create(vendor=vendor, event_type=event_type, **kwargs)

@@ -1622,22 +1622,76 @@ def vendor_kpis_api(request):
         "low_stock": vendor_products.filter(quantity__lte=5, quantity__gt=0).count(),
         "total_inventory": vendor_products.aggregate(Sum("quantity"))["quantity__sum"]
         or 0,
-    }  # Subscription Information
+    }
+
+    # Subscription Information with Enhanced Analytics
     now = timezone.now()
-    days_remaining = 0
-    if vendor.subscription_expiry:
-        time_diff = vendor.subscription_expiry - now
-        days_remaining = max(0, time_diff.days)
+    days_remaining = vendor.get_subscription_days_remaining()
+    is_in_grace = vendor.is_in_grace_period()
+
+    # Get subscription history analytics
+    from .models import SubscriptionHistory
+
+    subscription_history = SubscriptionHistory.objects.filter(vendor=vendor)
+
+    # Payment analytics
+    payment_success_count = subscription_history.filter(
+        event_type="payment_success"
+    ).count()
+    payment_failed_count = subscription_history.filter(
+        event_type="payment_failed"
+    ).count()
+    total_payments = (
+        subscription_history.filter(
+            event_type="payment_success", amount__isnull=False
+        ).aggregate(Sum("amount"))["amount__sum"]
+        or 0
+    )
+
+    # Trial and subscription analytics
+    trial_analytics = {}
+    if vendor.trial_start and vendor.trial_end:
+        trial_analytics = {
+            "trial_started": vendor.trial_start.isoformat(),
+            "trial_ends": vendor.trial_end.isoformat(),
+            "trial_days_used": (
+                (now - vendor.trial_start).days if now > vendor.trial_start else 0
+            ),
+            "trial_days_remaining": (
+                max(0, (vendor.trial_end - now).days) if vendor.trial_end > now else 0
+            ),
+        }
 
     subscription_info = {
         "status": vendor.subscription_status,
         "days_remaining": days_remaining,
+        "is_in_grace_period": is_in_grace,
         "plan_name": vendor.plan.name if vendor.plan else None,
+        "plan_price": float(vendor.plan.price) if vendor.plan else 0,
+        "max_products": vendor.plan.max_products if vendor.plan else 0,
         "expires_at": (
             vendor.subscription_expiry.isoformat()
             if vendor.subscription_expiry
             else None
         ),
+        "last_payment": (
+            vendor.last_payment_date.isoformat() if vendor.last_payment_date else None
+        ),
+        "failed_payment_count": vendor.failed_payment_count,
+        "analytics": {
+            "successful_payments": payment_success_count,
+            "failed_payments": payment_failed_count,
+            "total_payments_value": float(total_payments),
+            "average_payment": (
+                float(total_payments / payment_success_count)
+                if payment_success_count > 0
+                else 0
+            ),
+            "subscription_changes": subscription_history.filter(
+                event_type__in=["plan_upgraded", "plan_downgraded"]
+            ).count(),
+            "trial_info": trial_analytics if trial_analytics else None,
+        },
     }
 
     # Response data
@@ -1864,6 +1918,237 @@ def cancel_subscription_api(request):
     return Response({"message": "Subscription cancelled successfully."}, status=200)
 
 
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Pause Subscription",
+    operation_description="Temporarily pause the vendor's subscription. Vendor maintains access during pause.",
+    security=[{"Bearer": []}],
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            "reason": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="Optional reason for pausing subscription",
+            )
+        },
+    ),
+    responses={
+        200: openapi.Response(
+            description="Subscription paused successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "status": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Cannot pause subscription in current state"),
+        403: openapi.Response(description="User is not a vendor"),
+    },
+    tags=["Vendor Subscription"],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, VendorFeatureAccess])
+def pause_subscription_api(request):
+    """Pause the vendor's subscription temporarily"""
+    try:
+        vendor = request.user.vendor_profile
+    except VendorProfile.DoesNotExist:
+        return Response({"error": "User is not a vendor."}, status=403)
+
+    reason = request.data.get("reason", "")
+
+    if vendor.pause_subscription(reason):
+        return Response(
+            {
+                "message": "Subscription paused successfully.",
+                "status": vendor.subscription_status,
+                "reason": reason,
+            },
+            status=200,
+        )
+    else:
+        return Response(
+            {
+                "error": f"Cannot pause subscription. Current status: {vendor.subscription_status}"
+            },
+            status=400,
+        )
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Resume Subscription",
+    operation_description="Resume a paused subscription and return to active status.",
+    security=[{"Bearer": []}],
+    responses={
+        200: openapi.Response(
+            description="Subscription resumed successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "status": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        400: openapi.Response(
+            description="Cannot resume subscription in current state"
+        ),
+        403: openapi.Response(description="User is not a vendor"),
+    },
+    tags=["Vendor Subscription"],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, VendorFeatureAccess])
+def resume_subscription_api(request):
+    """Resume a paused subscription"""
+    try:
+        vendor = request.user.vendor_profile
+    except VendorProfile.DoesNotExist:
+        return Response({"error": "User is not a vendor."}, status=403)
+
+    if vendor.resume_subscription():
+        return Response(
+            {
+                "message": "Subscription resumed successfully.",
+                "status": vendor.subscription_status,
+            },
+            status=200,
+        )
+    else:
+        return Response(
+            {
+                "error": f"Cannot resume subscription. Current status: {vendor.subscription_status}"
+            },
+            status=400,
+        )
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Change Subscription Plan",
+    operation_description="Upgrade or downgrade subscription plan with prorated billing.",
+    security=[{"Bearer": []}],
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            "plan_id": openapi.Schema(
+                type=openapi.TYPE_INTEGER, description="ID of the new plan to switch to"
+            ),
+            "immediate": openapi.Schema(
+                type=openapi.TYPE_BOOLEAN,
+                description="Whether to apply change immediately (true) or at next billing cycle (false)",
+                default=False,
+            ),
+        },
+        required=["plan_id"],
+    ),
+    responses={
+        200: openapi.Response(
+            description="Plan changed successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "old_plan": openapi.Schema(type=openapi.TYPE_STRING),
+                    "new_plan": openapi.Schema(type=openapi.TYPE_STRING),
+                    "prorated_amount": openapi.Schema(type=openapi.TYPE_NUMBER),
+                    "is_upgrade": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid plan or cannot change plan"),
+        403: openapi.Response(description="User is not a vendor"),
+        404: openapi.Response(description="Plan not found"),
+    },
+    tags=["Vendor Subscription"],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, VendorFeatureAccess])
+def change_plan_api(request):
+    """Change subscription plan with prorated billing"""
+    try:
+        vendor = request.user.vendor_profile
+    except VendorProfile.DoesNotExist:
+        return Response({"error": "User is not a vendor."}, status=403)
+
+    plan_id = request.data.get("plan_id")
+    immediate = request.data.get("immediate", False)
+
+    if not plan_id:
+        return Response({"error": "plan_id is required."}, status=400)
+
+    try:
+        new_plan = VendorPlan.objects.get(id=plan_id, is_active=True)
+    except VendorPlan.DoesNotExist:
+        return Response({"error": "Plan not found or inactive."}, status=404)
+
+    result = vendor.change_plan(new_plan, immediate=immediate)
+
+    if result:
+        return Response(
+            {
+                "message": f"Plan {'upgraded' if result['is_upgrade'] else 'downgraded'} successfully.",
+                "old_plan": result["old_plan"],
+                "new_plan": result["new_plan"],
+                "prorated_amount": result["prorated_amount"],
+                "is_upgrade": result["is_upgrade"],
+            },
+            status=200,
+        )
+    else:
+        return Response(
+            {"error": "Failed to change plan. You may already be on this plan."},
+            status=400,
+        )
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get Subscription History",
+    operation_description="Get detailed history of all subscription events for the vendor.",
+    security=[{"Bearer": []}],
+    responses={
+        200: openapi.Response(
+            description="Subscription history retrieved successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "results": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                },
+            ),
+        ),
+        403: openapi.Response(description="User is not a vendor"),
+    },
+    tags=["Vendor Subscription"],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, VendorFeatureAccess])
+def subscription_history_api(request):
+    """Get vendor's subscription history"""
+    try:
+        vendor = request.user.vendor_profile
+    except VendorProfile.DoesNotExist:
+        return Response({"error": "User is not a vendor."}, status=403)
+
+    from .models import SubscriptionHistory
+    from .serializers import SubscriptionHistorySerializer
+
+    history = SubscriptionHistory.objects.filter(vendor=vendor).order_by("-created_at")
+
+    paginator = StandardResultsPagination()
+    result_page = paginator.paginate_queryset(history, request)
+
+    serializer = SubscriptionHistorySerializer(result_page, many=True)
+    return paginator.get_paginated_response(serializer.data)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -1889,43 +2174,184 @@ def paystack_webhook(request):
         return HttpResponse(status=400)
 
     event = event_data.get("event")
+    data = event_data.get("data", {})
 
+    # Handle successful payments
     if event in ["charge.success", "invoice.payment_success"]:
-        reference = event_data.get("data", {}).get("reference")
-        subscription_code = event_data.get("data", {}).get("subscription")
+        return handle_successful_payment(data)
 
-        if not reference:
-            logger.warning("Missing reference in webhook.")
-            return HttpResponse(status=400)
+    # Handle failed payments
+    elif event in ["charge.failed", "invoice.payment_failed"]:
+        return handle_failed_payment(data)
 
-        try:
-            vendor = VendorProfile.objects.get(pending_ref=reference)
-        except VendorProfile.DoesNotExist:
-            logger.warning(f"No vendor with ref: {reference}")
-            return HttpResponse(status=404)
+    # Handle subscription events
+    elif event == "subscription.create":
+        return handle_subscription_created(data)
 
-        now = timezone.now()
-        if vendor.subscription_expiry and vendor.subscription_expiry > now:
-            logger.info(
-                f"Subscription for vendor {vendor.id} already active, skipping."
-            )
-            return HttpResponse(status=200)
+    elif event == "subscription.disable":
+        return handle_subscription_disabled(data)
 
-        if not subscription_code:
-            logger.warning(
-                f"Subscription code missing in webhook for vendor {vendor.id}"
-            )
-            return HttpResponse(status=400)
+    # Log unhandled events
+    else:
+        logger.info(f"Unhandled webhook event: {event}")
+        return HttpResponse(status=200)
 
+
+def handle_successful_payment(data):
+    """Handle successful payment webhook"""
+    from .models import SubscriptionHistory
+
+    reference = data.get("reference")
+    subscription_code = data.get("subscription")
+    amount = data.get("amount", 0) / 100  # Convert from kobo to naira
+
+    if not reference:
+        logger.warning("Missing reference in successful payment webhook.")
+        return HttpResponse(status=400)
+
+    try:
+        vendor = VendorProfile.objects.get(pending_ref=reference)
+    except VendorProfile.DoesNotExist:
+        logger.warning(f"No vendor with ref: {reference}")
+        return HttpResponse(status=404)
+
+    now = timezone.now()
+
+    # Check if subscription is already active and newer
+    if vendor.subscription_expiry and vendor.subscription_expiry > now:
+        logger.info(f"Subscription for vendor {vendor.id} already active, skipping.")
+        return HttpResponse(status=200)
+
+    # Update vendor subscription
+    old_status = vendor.subscription_status
+    vendor.paystack_subscription_code = (
+        subscription_code or vendor.paystack_subscription_code
+    )
+    vendor.subscription_status = "active"
+    vendor.subscription_expiry = now + timezone.timedelta(days=30)
+    vendor.last_payment_date = now
+    vendor.failed_payment_count = 0  # Reset failed payment count
+    vendor.pending_ref = None
+    vendor.save()
+
+    # Log the payment success
+    SubscriptionHistory.log_event(
+        vendor=vendor,
+        event_type="payment_success",
+        previous_status=old_status,
+        new_status="active",
+        amount=amount,
+        payment_reference=reference,
+        paystack_response=data,
+        notes=f"Payment successful, subscription renewed until {vendor.subscription_expiry}",
+    )
+
+    logger.info(
+        f"Payment successful for vendor: {vendor.id} | Amount: ₦{amount} | New expiry: {vendor.subscription_expiry}"
+    )
+    return HttpResponse(status=200)
+
+
+def handle_failed_payment(data):
+    """Handle failed payment webhook"""
+    from .models import SubscriptionHistory
+
+    reference = data.get("reference")
+    amount = data.get("amount", 0) / 100  # Convert from kobo to naira
+    failure_reason = data.get("gateway_response", "Payment failed")
+
+    if not reference:
+        logger.warning("Missing reference in failed payment webhook.")
+        return HttpResponse(status=400)
+
+    try:
+        vendor = VendorProfile.objects.get(pending_ref=reference)
+    except VendorProfile.DoesNotExist:
+        logger.warning(f"No vendor with ref: {reference}")
+        return HttpResponse(status=404)
+
+    # Increment failed payment count
+    vendor.failed_payment_count += 1
+    old_status = vendor.subscription_status
+
+    # Set status based on failed payment count
+    if vendor.failed_payment_count >= 3:
+        vendor.subscription_status = "defaulted"
+        notes = f"Payment failed (attempt {vendor.failed_payment_count}). Subscription defaulted."
+    else:
+        vendor.subscription_status = "grace"
+        notes = f"Payment failed (attempt {vendor.failed_payment_count}). Subscription in grace period."
+
+    vendor.save()
+
+    # Log the payment failure
+    SubscriptionHistory.log_event(
+        vendor=vendor,
+        event_type="payment_failed",
+        previous_status=old_status,
+        new_status=vendor.subscription_status,
+        amount=amount,
+        payment_reference=reference,
+        paystack_response=data,
+        notes=f"{notes} Reason: {failure_reason}",
+    )
+
+    logger.warning(
+        f"Payment failed for vendor: {vendor.id} | Amount: ₦{amount} | Attempt: {vendor.failed_payment_count} | Reason: {failure_reason}"
+    )
+    return HttpResponse(status=200)
+
+
+def handle_subscription_created(data):
+    """Handle subscription creation webhook"""
+    subscription_code = data.get("subscription_code")
+    customer_email = data.get("customer", {}).get("email")
+
+    if not subscription_code or not customer_email:
+        logger.warning("Missing subscription code or customer email in webhook.")
+        return HttpResponse(status=400)
+
+    try:
+        vendor = VendorProfile.objects.get(user__email=customer_email)
         vendor.paystack_subscription_code = subscription_code
-        vendor.subscription_status = "active"
-        vendor.subscription_expiry = now + timezone.timedelta(days=30)
-        vendor.last_payment_date = now
-        vendor.pending_ref = None
+        vendor.save()
+        logger.info(f"Subscription code updated for vendor: {vendor.id}")
+    except VendorProfile.DoesNotExist:
+        logger.warning(f"No vendor found with email: {customer_email}")
+        return HttpResponse(status=404)
+
+    return HttpResponse(status=200)
+
+
+def handle_subscription_disabled(data):
+    """Handle subscription disabled webhook"""
+    from .models import SubscriptionHistory
+
+    subscription_code = data.get("subscription_code")
+
+    if not subscription_code:
+        logger.warning("Missing subscription code in disable webhook.")
+        return HttpResponse(status=400)
+
+    try:
+        vendor = VendorProfile.objects.get(paystack_subscription_code=subscription_code)
+        old_status = vendor.subscription_status
+        vendor.subscription_status = "cancelled"
         vendor.save()
 
-        logger.info(
-            f"Subscription updated for vendor: {vendor.id} | New expiry: {vendor.subscription_expiry}"
+        # Log the cancellation
+        SubscriptionHistory.log_event(
+            vendor=vendor,
+            event_type="subscription_cancelled",
+            previous_status=old_status,
+            new_status="cancelled",
+            paystack_response=data,
+            notes="Subscription disabled via Paystack webhook",
         )
+
+        logger.info(f"Subscription disabled for vendor: {vendor.id}")
+    except VendorProfile.DoesNotExist:
+        logger.warning(f"No vendor found with subscription code: {subscription_code}")
+        return HttpResponse(status=404)
 
     return HttpResponse(status=200)

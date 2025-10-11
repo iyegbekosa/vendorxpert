@@ -1,6 +1,6 @@
 # userprofile/serializers.py
 from rest_framework import serializers
-from .models import UserProfile, VendorProfile, VendorPlan
+from .models import UserProfile, VendorProfile, VendorPlan, SubscriptionHistory
 from store.serializers import Product, ProductSerializer
 from store.models import OrderItem, Order
 from django.utils.text import slugify
@@ -378,12 +378,13 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                 # If no basic plan exists, create one or use any active plan
                 default_plan = VendorPlan.objects.filter(is_active=True).first()
 
-            # Step 2: Create the vendor profile first (safer approach)
+            # Step 2: Create the vendor profile with trial period
             vendor_data = {
                 "user": request.user,
-                "subscription_expiry": timezone.now() + timedelta(days=30),
                 "plan": default_plan,
-                "subscription_status": "active",
+                "subscription_status": "trial",  # Start with trial
+                "trial_start": timezone.now(),
+                "trial_end": timezone.now() + timedelta(days=14),  # 14-day trial
                 "is_verified": True,  # Auto-verify new vendors for now
                 **validated_data,
             }
@@ -401,6 +402,16 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                 vendor_data["whatsapp_number"] = whatsapp_number
 
             vendor = VendorProfile.objects.create(**vendor_data)
+
+            # Log trial creation
+            from .models import SubscriptionHistory
+
+            SubscriptionHistory.log_event(
+                vendor=vendor,
+                event_type="trial_started",
+                new_plan=default_plan,
+                notes="14-day trial period started on vendor registration",
+            )
 
             # If a file was uploaded, validate and save it. Otherwise, try the URL path.
             if file_logo:
@@ -659,3 +670,34 @@ class SubscriptionResponseSerializer(serializers.Serializer):
     access_code = serializers.CharField(help_text="Paystack access code")
     reference = serializers.CharField(help_text="Payment reference")
     message = serializers.CharField(help_text="Success message")
+
+
+class SubscriptionHistorySerializer(serializers.ModelSerializer):
+    """Serializer for subscription history events"""
+
+    vendor_name = serializers.CharField(source="vendor.store_name", read_only=True)
+    previous_plan_name = serializers.CharField(
+        source="previous_plan.name", read_only=True
+    )
+    new_plan_name = serializers.CharField(source="new_plan.name", read_only=True)
+    event_display = serializers.CharField(
+        source="get_event_type_display", read_only=True
+    )
+
+    class Meta:
+        model = SubscriptionHistory
+        fields = [
+            "id",
+            "event_type",
+            "event_display",
+            "vendor_name",
+            "previous_plan_name",
+            "new_plan_name",
+            "previous_status",
+            "new_status",
+            "amount",
+            "payment_reference",
+            "notes",
+            "created_at",
+        ]
+        read_only_fields = fields

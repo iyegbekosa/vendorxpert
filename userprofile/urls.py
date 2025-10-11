@@ -83,6 +83,26 @@ urlpatterns += [
         name="cancel_subscription_api",
     ),
     path(
+        "api/pause_subscription/",
+        api_views.pause_subscription_api,
+        name="pause_subscription_api",
+    ),
+    path(
+        "api/resume_subscription/",
+        api_views.resume_subscription_api,
+        name="resume_subscription_api",
+    ),
+    path(
+        "api/change_plan/",
+        api_views.change_plan_api,
+        name="change_plan_api",
+    ),
+    path(
+        "api/subscription_history/",
+        api_views.subscription_history_api,
+        name="subscription_history_api",
+    ),
+    path(
         "api/paystack_subscription_webhook/",
         api_views.paystack_webhook,
         name="paystack_subscription_webhook",
