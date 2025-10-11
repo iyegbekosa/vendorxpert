@@ -160,9 +160,30 @@ def login_api(request):
             "access": str(access_token),
         }
 
-        # Include vendor ID if user is a vendor
+        # Include vendor details if user is a vendor
         if is_vendor:
-            response_data["vendor_id"] = user.vendor_profile.id
+            vendor = user.vendor_profile
+            response_data["vendor_id"] = vendor.id
+            response_data["store_details"] = {
+                "store_name": vendor.store_name,
+                "store_logo_url": vendor.store_logo.url if vendor.store_logo else None,
+                "store_description": vendor.store_description,
+                "phone_number": (
+                    str(vendor.phone_number) if vendor.phone_number else None
+                ),
+                "whatsapp_number": (
+                    str(vendor.whatsapp_number) if vendor.whatsapp_number else None
+                ),
+                "instagram_handle": vendor.instagram_handle,
+                "tiktok_handle": vendor.tiktok_handle,
+                "is_verified": vendor.is_verified,
+                "subscription_status": vendor.subscription_status,
+                "subscription_expiry": (
+                    vendor.subscription_expiry.isoformat()
+                    if vendor.subscription_expiry
+                    else None
+                ),
+            }
 
         return Response(response_data, status=status.HTTP_200_OK)
     else:
