@@ -584,6 +584,7 @@ class VendorListSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source="user.user_name", read_only=True)
     plan_name = serializers.CharField(source="plan.name", read_only=True)
     product_count = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = VendorProfile
@@ -603,6 +604,7 @@ class VendorListSerializer(serializers.ModelSerializer):
             "subscription_start",
             "subscription_expiry",
             "product_count",
+            "average_rating",
         ]
 
     def get_product_count(self, obj):
@@ -610,6 +612,19 @@ class VendorListSerializer(serializers.ModelSerializer):
         return Product.objects.filter(
             vendor=obj, status=Product.ACTIVE, stock=Product.IN_STOCK
         ).count()
+
+    def get_average_rating(self, obj):
+        """Calculate average rating across all vendor's products"""
+        from django.db.models import Avg
+        from store.models import Review
+
+        # Get all reviews for all products belonging to this vendor
+        vendor_reviews = Review.objects.filter(
+            product__vendor=obj, approved_review=True
+        ).aggregate(avg_rating=Avg("rating"))
+
+        avg_rating = vendor_reviews["avg_rating"]
+        return round(avg_rating, 1) if avg_rating is not None else 0.0
 
 
 class VendorPlanSerializer(serializers.ModelSerializer):
