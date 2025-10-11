@@ -338,6 +338,11 @@ def paystack_callback(request):
         order = payment.order
         order.is_paid = True
         order.status = "completed"
+
+        # Reduce stock for all ordered items
+        for item in order.items.all():
+            item.product.reduce_stock(item.quantity)
+
         order.save()
 
         if "cart" in request.session:

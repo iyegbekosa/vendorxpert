@@ -1108,6 +1108,11 @@ def paystack_webhook_api(request):
                     if order:
                         order.is_paid = True
                         order.status = "completed"
+
+                        # Reduce stock for all ordered items
+                        for item in order.items.all():
+                            item.product.reduce_stock(item.quantity)
+
                         order.save()
 
                         # Clear the user's cart items for this order

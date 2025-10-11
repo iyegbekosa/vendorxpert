@@ -1618,10 +1618,11 @@ def vendor_kpis_api(request):
     product_stats = {
         "total_products": vendor_products.count(),
         "active_products": vendor_products.filter(status=Product.ACTIVE).count(),
-        "out_of_stock": vendor_products.filter(stock=Product.OUT_OF_STOCK).count(),
-    }
-
-    # Subscription Information
+        "out_of_stock": vendor_products.filter(quantity=0).count(),
+        "low_stock": vendor_products.filter(quantity__lte=5, quantity__gt=0).count(),
+        "total_inventory": vendor_products.aggregate(Sum("quantity"))["quantity__sum"]
+        or 0,
+    }  # Subscription Information
     now = timezone.now()
     days_remaining = 0
     if vendor.subscription_expiry:
