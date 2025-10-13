@@ -41,6 +41,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import HttpResponse
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from .email_utils import send_welcome_email, send_vendor_welcome_email
 
 
 @swagger_auto_schema(
@@ -69,14 +70,27 @@ def signup_api(request):
     Register a new user account.
 
     Creates a new user account with required fields: username, email, first_name, last_name, and password.
-    Automatically logs the user in upon successful registration.
+    Automatically logs the user in upon successful registration and sends a welcome email.
     """
     serializer = SignupSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
         login(request, user)
+
+        # Send welcome email in the background
+        try:
+            send_welcome_email(user)
+        except Exception as e:
+            # Log the error but don't fail the registration
+            logger.error(f"Failed to send welcome email to {user.email}: {str(e)}")
+
         return Response(
-            {"success": True, "user_id": user.id}, status=status.HTTP_201_CREATED
+            {
+                "success": True,
+                "user_id": user.id,
+                "message": "Account created successfully! Welcome email sent.",
+            },
+            status=status.HTTP_201_CREATED,
         )
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -549,11 +563,22 @@ def register_vendor_api(request):
         try:
             vendor = serializer.save()
 
+            # Send vendor welcome email in the background
+            try:
+                send_vendor_welcome_email(vendor)
+                email_message = "Vendor welcome email sent successfully!"
+            except Exception as e:
+                # Log the error but don't fail the registration
+                logger.error(
+                    f"Failed to send vendor welcome email to {vendor.user.email}: {str(e)}"
+                )
+                email_message = "Vendor account created successfully (welcome email failed to send)."
+
             # Prepare response data
             response_data = {
                 "success": True,
                 "vendor_id": vendor.id,
-                "message": "Vendor account created successfully",
+                "message": f"Vendor account created successfully! {email_message}",
                 "store_name": vendor.store_name,
                 "store_logo_url": (
                     vendor.store_logo.url
