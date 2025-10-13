@@ -1,0 +1,35 @@
+VendorXpert - Payment Receipt
+
+Thank you for your purchase, {{ user_name }}!
+
+ORDER DETAILS:
+Order Number: #{{ order_ref }}
+Order Date: {{ order_date }}
+Customer: {{ customer_name }}
+Phone: {{ customer_phone }}
+
+ITEMS PURCHASED:
+{% for item in items %}
+- {{ item.product_name }} (by {{ item.vendor_name }})
+  Quantity: {{ item.quantity }} × ₦{{ item.unit_price|floatformat:2 }} = ₦{{ item.total_price|floatformat:2 }}
+{% endfor %}
+
+TOTAL PAID: ₦{{ total_amount|floatformat:2 }}
+
+PICKUP INFORMATION:
+Location: {{ pickup_location }}
+Please bring this receipt and a valid ID when picking up your order.
+Contact: {{ customer_phone }}
+
+Vendors in this order: {% for vendor in vendors_list %}{{ vendor }}{% if not forloop.last %}, {% endif %}{% endfor %}
+
+Need Help?
+- Email: {{ support_email }}
+- Contact vendor directly for order-specific questions
+- Check order status in VendorXpert app
+
+Thank you for choosing VendorXpert!
+
+---
+This is an automated receipt for order #{{ order_ref }}.
+Questions? Contact us at {{ support_email }}

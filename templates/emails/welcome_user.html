@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to VendorXpert</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo {
+            font-size: 28px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .welcome-title {
+            color: #27ae60;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        .content {
+            margin-bottom: 30px;
+        }
+        .features {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .feature-item {
+            margin: 10px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+        .feature-item::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #27ae60;
+            font-weight: bold;
+        }
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            text-decoration: none;
+            border-radius: 25px;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            color: #666;
+            font-size: 14px;
+        }
+        .social-links {
+            margin: 15px 0;
+        }
+        .social-links a {
+            display: inline-block;
+            margin: 0 10px;
+            color: #667eea;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🛍️ VendorXpert</div>
+            <h1 class="welcome-title">Welcome to VendorXpert, {{ user_name }}! 🎉</h1>
+        </div>
+        
+        <div class="content">
+            <p>Hi <strong>{{ full_name }}</strong>,</p>
+            
+            <p>We're absolutely thrilled to welcome you to the <strong>VendorXpert</strong> community! 🚀</p>
+            
+            <p>You've just joined Nigeria's most innovative marketplace that connects students and vendors seamlessly. Whether you're here to discover amazing products or showcase your own business, you're in the right place!</p>
+            
+            <div class="features">
+                <h3>🌟 What you can do with VendorXpert:</h3>
+                <div class="feature-item">Browse products from verified local vendors</div>
+                <div class="feature-item">Discover student-friendly deals and discounts</div>
+                <div class="feature-item">Shop conveniently within your campus</div>
+                <div class="feature-item">Rate and review your favorite vendors</div>
+                <div class="feature-item">Join our growing community of smart shoppers</div>
+            </div>
+            
+            <p><strong>Ready to explore?</strong> Start browsing our marketplace and discover what makes VendorXpert special!</p>
+            
+            <div style="text-align: center;">
+                <a href="#" class="cta-button">🛍️ Start Shopping Now</a>
+            </div>
+            
+            <p><strong>💡 Pro Tip:</strong> Complete your profile to get personalized recommendations and exclusive offers!</p>
+        </div>
+        
+        <div class="content">
+            <h3>🤝 Need Help Getting Started?</h3>
+            <p>Our friendly support team is here to help you make the most of VendorXpert:</p>
+            <ul>
+                <li>📧 Email us at <a href="mailto:{{ support_email }}">{{ support_email }}</a></li>
+                <li>💬 Check out our FAQ section</li>
+                <li>📱 Follow us on social media for tips and updates</li>
+            </ul>
+        </div>
+        
+        <div class="content">
+            <p><strong>Interested in becoming a vendor?</strong> VendorXpert offers amazing opportunities for student entrepreneurs and local businesses to reach their target audience. <a href="#" style="color: #667eea;">Learn more about our vendor program</a>.</p>
+        </div>
+        
+        <div class="footer">
+            <p>Welcome aboard! We can't wait to see what you discover.</p>
+            <p><strong>The VendorXpert Team</strong> 💜</p>
+            
+            <div class="social-links">
+                <a href="#">📱 Instagram</a>
+                <a href="#">🐦 Twitter</a>
+                <a href="#">📘 Facebook</a>
+            </div>
+            
+            <p style="margin-top: 20px; font-size: 12px;">
+                You received this email because you signed up for VendorXpert.<br>
+                If you have any questions, contact us at {{ support_email }}
+            </p>
+        </div>
+    </div>
+</body>
+</html>

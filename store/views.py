@@ -348,13 +348,17 @@ def paystack_callback(request):
             item.product.reduce_stock(item.quantity)
 
         order.save()
-        
+
         # Send receipt email
         try:
             send_receipt_email(order)
-            messages.success(request, "Payment successful! Receipt email sent to your inbox.")
+            messages.success(
+                request, "Payment successful! Receipt email sent to your inbox."
+            )
         except Exception as e:
-            logger.error(f"Failed to send receipt email for order {order.ref}: {str(e)}")
+            logger.error(
+                f"Failed to send receipt email for order {order.ref}: {str(e)}"
+            )
             messages.success(request, "Payment successful!")
 
         if "cart" in request.session:

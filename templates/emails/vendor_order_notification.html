@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Order Notification - VendorXpert</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 650px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e74c3c;
+        }
+        .logo {
+            font-size: 28px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .notification-title {
+            color: #e74c3c;
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        .order-highlight {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .order-info {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        .info-item {
+            margin: 5px 0;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+        }
+        .items-table th {
+            background: #e74c3c;
+            color: white;
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: bold;
+        }
+        .items-table td {
+            padding: 12px 8px;
+            border-bottom: 1px solid #ddd;
+        }
+        .items-table tr:hover {
+            background-color: #f8f9fa;
+        }
+        .earning-section {
+            background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .earning-amount {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .action-info {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .action-info h3 {
+            margin-top: 0;
+            color: #856404;
+        }
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            text-decoration: none;
+            border-radius: 25px;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            color: #666;
+            font-size: 14px;
+        }
+        @media (max-width: 600px) {
+            .order-info {
+                grid-template-columns: 1fr;
+            }
+            .items-table {
+                font-size: 14px;
+            }
+            .items-table th,
+            .items-table td {
+                padding: 8px 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🏪 VendorXpert</div>
+            <h1 class="notification-title">New Order Received! 🎉</h1>
+            <p>You've got a new customer, <strong>{{ vendor_name }}</strong>!</p>
+        </div>
+        
+        <div class="order-highlight">
+            <h2>📦 Order #{{ order_ref }}</h2>
+            <p>{{ customer_name }} just ordered from {{ store_name }}!</p>
+        </div>
+        
+        <div class="order-info">
+            <div class="info-item">
+                <span class="info-label">Order Number:</span><br>
+                <strong>#{{ order_ref }}</strong>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Order Date:</span><br>
+                {{ order_date }}
+            </div>
+            <div class="info-item">
+                <span class="info-label">Customer:</span><br>
+                {{ customer_name }}
+            </div>
+            <div class="info-item">
+                <span class="info-label">Phone:</span><br>
+                {{ customer_phone }}
+            </div>
+        </div>
+        
+        <h3>📋 Your Items in this Order</h3>
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Qty</th>
+                    <th>Price</th>
+                    <th>Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in vendor_items %}
+                <tr>
+                    <td><strong>{{ item.product_name }}</strong></td>
+                    <td>{{ item.quantity }}</td>
+                    <td>₦{{ item.unit_price|floatformat:2 }}</td>
+                    <td>₦{{ item.total_price|floatformat:2 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <div class="earning-section">
+            <h3>💰 Your Earnings from this Order</h3>
+            <div class="earning-amount">₦{{ vendor_total|floatformat:2 }}</div>
+            <p>Payment already processed - funds will be settled to your account</p>
+        </div>
+        
+        <div class="action-info">
+            <h3>📍 Next Steps</h3>
+            <p><strong>Pickup Location:</strong> {{ pickup_location }}</p>
+            <p><strong>Customer Contact:</strong> {{ customer_phone }}</p>
+            <ul>
+                <li>✅ Prepare the ordered items</li>
+                <li>📞 Contact the customer if needed</li>
+                <li>📦 Coordinate pickup at {{ pickup_location }}</li>
+                <li>✅ Mark items as fulfilled once delivered</li>
+            </ul>
+        </div>
+        
+        <div style="text-align: center;">
+            <a href="#" class="cta-button">🏪 View Order in Dashboard</a>
+        </div>
+        
+        <div class="content">
+            <h3>📱 Order Management Tips</h3>
+            <ul>
+                <li><strong>Quick Response:</strong> Contact the customer promptly if you have any questions</li>
+                <li><strong>Quality Check:</strong> Ensure items are in perfect condition before delivery</li>
+                <li><strong>Timely Fulfillment:</strong> Prepare orders as soon as possible</li>
+                <li><strong>Professional Service:</strong> Maintain excellent customer service standards</li>
+            </ul>
+        </div>
+        
+        <div class="content">
+            <h3>🤝 Need Support?</h3>
+            <p>If you need help with this order or have questions:</p>
+            <ul>
+                <li>📧 Email us at <a href="mailto:{{ support_email }}">{{ support_email }}</a></li>
+                <li>💬 Access vendor support resources</li>
+                <li>📞 Customer contact: {{ customer_phone }}</li>
+            </ul>
+        </div>
+        
+        <div class="footer">
+            <p>Thank you for being part of VendorXpert!</p>
+            <p><strong>Keep up the great work!</strong> 🌟</p>
+            
+            <p style="margin-top: 20px; font-size: 12px;">
+                This notification is for order #{{ order_ref }}.<br>
+                Questions? Contact us at {{ support_email }}
+            </p>
+        </div>
+    </div>
+</body>
+</html>

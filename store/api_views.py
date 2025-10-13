@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from .models import Product, Category, Payment, OrderItem, Review, Order
-from userprofile.email_utils import send_receipt_email
+from userprofile.email_utils import send_receipt_email, send_vendor_order_notification
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1041,6 +1041,20 @@ def paystack_callback_api(request):
             order.status = "completed"
         order.save()
 
+        # Send receipt email to customer
+        try:
+            send_receipt_email(order)
+            logger.info(f"Receipt email sent successfully for order {order.id}")
+        except Exception as e:
+            logger.error(f"Failed to send receipt email for order {order.id}: {e}")
+
+        # Send order notification email to vendor
+        try:
+            send_vendor_order_notification(order)
+            logger.info(f"Vendor notification sent successfully for order {order.id}")
+        except Exception as e:
+            logger.error(f"Failed to send vendor notification for order {order.id}: {e}")
+
         cart = Cart(request)
         cart.clear()
 
@@ -1118,13 +1132,24 @@ def paystack_webhook_api(request):
                             item.product.reduce_stock(item.quantity)
 
                         order.save()
-                        
+
                         # Send receipt email for the completed order
                         try:
                             send_receipt_email(order)
                             logger.info(f"Receipt email sent for order {order.ref}")
                         except Exception as e:
-                            logger.error(f"Failed to send receipt email for order {order.ref}: {str(e)}")
+                            logger.error(
+                                f"Failed to send receipt email for order {order.ref}: {str(e)}"
+                            )
+
+                        # Send order notification email to vendor
+                        try:
+                            send_vendor_order_notification(order)
+                            logger.info(f"Vendor notification sent for order {order.ref}")
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to send vendor notification for order {order.ref}: {str(e)}"
+                            )
 
                         # Clear the user's cart items for this order
                         # Note: We can't clear the session-based cart from webhook
@@ -1430,14 +1455,16 @@ def verify_payment_api(request):
         # Clear cart
         cart = Cart(request)
         cart.clear()
-        
+
         # Send receipt email in the background
         try:
             send_receipt_email(order)
             email_message = "Receipt email sent successfully!"
         except Exception as e:
             # Log the error but don't fail the payment verification
-            logger.error(f"Failed to send receipt email for order {order.ref}: {str(e)}")
+            logger.error(
+                f"Failed to send receipt email for order {order.ref}: {str(e)}"
+            )
             email_message = "Payment verified (receipt email failed to send)."
 
         # Get order items with product details
