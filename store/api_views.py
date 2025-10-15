@@ -1053,7 +1053,9 @@ def paystack_callback_api(request):
             send_vendor_order_notification(order)
             logger.info(f"Vendor notification sent successfully for order {order.id}")
         except Exception as e:
-            logger.error(f"Failed to send vendor notification for order {order.id}: {e}")
+            logger.error(
+                f"Failed to send vendor notification for order {order.id}: {e}"
+            )
 
         cart = Cart(request)
         cart.clear()
@@ -1145,7 +1147,9 @@ def paystack_webhook_api(request):
                         # Send order notification email to vendor
                         try:
                             send_vendor_order_notification(order)
-                            logger.info(f"Vendor notification sent for order {order.ref}")
+                            logger.info(
+                                f"Vendor notification sent for order {order.ref}"
+                            )
                         except Exception as e:
                             logger.error(
                                 f"Failed to send vendor notification for order {order.ref}: {str(e)}"

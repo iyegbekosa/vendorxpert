@@ -21,6 +21,7 @@ from .serializers import (
 from .models import VendorProfile, VendorPlan
 from store.utils import create_paystack_subaccount
 from django.db import transaction
+from django.db.models import Count, Q
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from store.models import OrderItem, Order, Payment, Review
@@ -1121,6 +1122,55 @@ def delete_product_api(request, pk):
     )
 
 
+@swagger_auto_schema(
+    method="get",
+    operation_description="Get all orders for a vendor with KPIs",
+    security=[{"Bearer": []}],
+    manual_parameters=[
+        openapi.Parameter(
+            "page",
+            openapi.IN_QUERY,
+            description="Page number",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Vendor orders retrieved successfully with KPIs",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                    "results": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                    "kpis": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "total_orders": openapi.Schema(type=openapi.TYPE_INTEGER),
+                            "pending_orders": openapi.Schema(type=openapi.TYPE_INTEGER),
+                            "completed_orders": openapi.Schema(
+                                type=openapi.TYPE_INTEGER
+                            ),
+                            "cancelled_orders": openapi.Schema(
+                                type=openapi.TYPE_INTEGER
+                            ),
+                            "total_revenue": openapi.Schema(type=openapi.TYPE_INTEGER),
+                            "completion_rate": openapi.Schema(type=openapi.TYPE_NUMBER),
+                        },
+                    ),
+                },
+            ),
+        ),
+        403: openapi.Response(description="User is not a vendor"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Vendor Orders"],
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, VendorFeatureAccess])
 def vendor_order_list_api(request):
@@ -1137,11 +1187,54 @@ def vendor_order_list_api(request):
         .order_by("-order__created_at")
     )
 
+    # Calculate KPIs
+    total_orders = order_items.count()
+    pending_orders = order_items.filter(fulfilled=False).count()
+    completed_orders = order_items.filter(fulfilled=True).count()
+
+    # Get unique orders for this vendor and calculate cancelled orders
+    vendor_orders = Order.objects.filter(items__product__vendor=vendor).distinct()
+
+    # Cancelled orders are those with failed payments or no payments
+    cancelled_orders = (
+        vendor_orders.filter(
+            Q(payments__status="failed") | Q(payments__isnull=True, is_paid=False)
+        )
+        .distinct()
+        .count()
+    )
+
+    # Total revenue from completed orders
+    total_revenue = sum(item.price for item in order_items.filter(fulfilled=True))
+
+    # Paginate order items
     paginator = StandardResultsPagination()
     result_page = paginator.paginate_queryset(order_items, request)
 
     serializer = VendorOrderItemSerializer(result_page, many=True)
-    return paginator.get_paginated_response(serializer.data)
+
+    # Create response with KPIs
+    kpis = {
+        "total_orders": total_orders,
+        "pending_orders": pending_orders,
+        "completed_orders": completed_orders,
+        "cancelled_orders": cancelled_orders,
+        "total_revenue": total_revenue,
+        "completion_rate": round(
+            (completed_orders / total_orders * 100) if total_orders > 0 else 0, 2
+        ),
+    }
+
+    # Create custom response data
+    response_data = {
+        "count": paginator.page.paginator.count,
+        "next": paginator.get_next_link(),
+        "previous": paginator.get_previous_link(),
+        "results": serializer.data,
+        "kpis": kpis,
+    }
+
+    return Response(response_data)
 
 
 @api_view(["GET"])
