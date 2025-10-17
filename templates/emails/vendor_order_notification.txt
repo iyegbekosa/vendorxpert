@@ -1,0 +1,45 @@
+New Order Received - VendorXpert
+
+You've got a new customer, {{ vendor_name }}!
+
+ORDER DETAILS:
+Order Number: #{{ order_ref }}
+Order Date: {{ order_date }}
+Customer: {{ customer_name }}
+Phone: {{ customer_phone }}
+
+YOUR ITEMS IN THIS ORDER:
+{% for item in vendor_items %}
+- {{ item.product_name }}
+  Quantity: {{ item.quantity }} × ₦{{ item.unit_price|floatformat:2 }} = ₦{{ item.total_price|floatformat:2 }}
+{% endfor %}
+
+YOUR EARNINGS: ₦{{ vendor_total|floatformat:2 }}
+Payment already processed - funds will be settled to your account
+
+NEXT STEPS:
+Pickup Location: {{ pickup_location }}
+Customer Contact: {{ customer_phone }}
+
+✅ Prepare the ordered items
+📞 Contact the customer if needed  
+📦 Coordinate pickup at {{ pickup_location }}
+✅ Mark items as fulfilled once delivered
+
+Order Management Tips:
+- Quick Response: Contact the customer promptly if you have any questions
+- Quality Check: Ensure items are in perfect condition before delivery
+- Timely Fulfillment: Prepare orders as soon as possible
+- Professional Service: Maintain excellent customer service standards
+
+Need Support?
+- Email us at {{ support_email }}
+- Access vendor support resources
+- Customer contact: {{ customer_phone }}
+
+Thank you for being part of VendorXpert!
+Keep up the great work!
+
+---
+This notification is for order #{{ order_ref }}.
+Questions? Contact us at {{ support_email }}

@@ -1,0 +1,33 @@
+Welcome to VendorXpert, {{ user_name }}!
+
+Hi {{ full_name }},
+
+We're thrilled to welcome you to the VendorXpert community!
+
+You've just joined Nigeria's most innovative marketplace that connects students and vendors seamlessly.
+
+What you can do with VendorXpert:
+✓ Browse products from verified local vendors
+✓ Discover student-friendly deals and discounts  
+✓ Shop conveniently within your campus
+✓ Rate and review your favorite vendors
+✓ Join our growing community of smart shoppers
+
+Ready to explore? Start browsing our marketplace today!
+
+Pro Tip: Complete your profile to get personalized recommendations and exclusive offers!
+
+Need Help?
+- Email us at {{ support_email }}
+- Check out our FAQ section
+- Follow us on social media
+
+Interested in becoming a vendor? Learn more about our vendor program.
+
+Welcome aboard! We can't wait to see what you discover.
+
+The VendorXpert Team
+
+---
+You received this email because you signed up for VendorXpert.
+If you have any questions, contact us at {{ support_email }}

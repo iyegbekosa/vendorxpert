@@ -26,6 +26,17 @@ urlpatterns = [
 urlpatterns += [
     path("api/signup/", api_views.signup_api, name="signup_api"),
     path("api/login", api_views.login_api, name="login_api"),
+    path("api/profile/", api_views.profile_api, name="profile_api"),
+    path(
+        "api/profile/picture/",
+        api_views.upload_profile_picture_api,
+        name="upload_profile_picture_api",
+    ),
+    path(
+        "api/profile/picture/remove/",
+        api_views.remove_profile_picture_api,
+        name="remove_profile_picture_api",
+    ),
     path(
         "api/register-vendor/",
         api_views.register_vendor_api,
@@ -58,11 +69,38 @@ urlpatterns += [
         api_views.toggle_fulfillment_api,
         name="toggle_fulfillment_api",
     ),
+    path("api/vendor-plans/", api_views.vendor_plans_api, name="vendor_plans_api"),
+    path("api/vendor-kpis/", api_views.vendor_kpis_api, name="vendor_kpis_api"),
+    path(
+        "api/my-subscription/",
+        api_views.my_subscription_status_api,
+        name="my_subscription_status_api",
+    ),
     path("api/resubscribe/", api_views.resubscribe_api, name="resubscribe_api"),
     path(
         "api/cancel_subscription/",
         api_views.cancel_subscription_api,
         name="cancel_subscription_api",
+    ),
+    path(
+        "api/pause_subscription/",
+        api_views.pause_subscription_api,
+        name="pause_subscription_api",
+    ),
+    path(
+        "api/resume_subscription/",
+        api_views.resume_subscription_api,
+        name="resume_subscription_api",
+    ),
+    path(
+        "api/change_plan/",
+        api_views.change_plan_api,
+        name="change_plan_api",
+    ),
+    path(
+        "api/subscription_history/",
+        api_views.subscription_history_api,
+        name="subscription_history_api",
     ),
     path(
         "api/paystack_subscription_webhook/",

@@ -62,6 +62,9 @@ class Product(models.Model):
     )
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default=ACTIVE)
     stock = models.CharField(max_length=50, choices=STOCK_CHOICES, default=IN_STOCK)
+    quantity = models.PositiveIntegerField(
+        default=0, help_text="Available quantity in stock"
+    )
     featured = models.BooleanField(default=False)
 
     class Meta:
@@ -114,10 +117,40 @@ class Product(models.Model):
         )["rating__avg"]
         return round(avg_rating, 1) if avg_rating is not None else 0
 
+    @property
+    def is_in_stock(self):
+        """Returns True if product has quantity > 0"""
+        return self.quantity > 0
+
+    @property
+    def stock_display(self):
+        """Returns 'in stock' or 'out of stock' based on quantity"""
+        return self.IN_STOCK if self.is_in_stock else self.OUT_OF_STOCK
+
+    def reduce_stock(self, amount):
+        """Reduce stock by specified amount"""
+        if self.quantity >= amount:
+            self.quantity -= amount
+            self.save()
+            return True
+        return False
+
+    def add_stock(self, amount):
+        """Add stock by specified amount"""
+        self.quantity += amount
+        self.save()
+
     def save(self, *args, **kwargs):
         # Auto-generate unique slug from title if not provided
         if not self.slug and self.title:
             self.slug = self._generate_unique_slug()
+
+        # Auto-update stock status based on quantity
+        if self.quantity > 0:
+            self.stock = self.IN_STOCK
+        else:
+            self.stock = self.OUT_OF_STOCK
+
         super().save(*args, **kwargs)
 
     def _generate_unique_slug(self):

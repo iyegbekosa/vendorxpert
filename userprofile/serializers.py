@@ -1,12 +1,141 @@
 # userprofile/serializers.py
 from rest_framework import serializers
-from .models import UserProfile, VendorProfile, VendorPlan
+from .models import UserProfile, VendorProfile, VendorPlan, SubscriptionHistory
 from store.serializers import Product, ProductSerializer
 from store.models import OrderItem, Order
 from django.utils.text import slugify
 from datetime import timedelta
 from django.utils import timezone
 from store.utils import create_paystack_subaccount
+import requests
+from django.core.files.base import ContentFile
+from urllib.parse import urlparse
+import os
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    """Serializer for user profile details"""
+
+    vendor_info = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserProfile
+        fields = [
+            "id",
+            "user_name",
+            "email",
+            "first_name",
+            "last_name",
+            "hostel",
+            "profile_picture",
+            "start_date",
+            "is_vendor",
+            "vendor_info",
+        ]
+
+    def get_vendor_info(self, obj):
+        """Get vendor information if user is a vendor"""
+        if hasattr(obj, "vendor_profile"):
+            vendor = obj.vendor_profile
+            return {
+                "id": vendor.id,
+                "store_name": vendor.store_name,
+                "store_description": vendor.store_description,
+                "phone_number": (
+                    str(vendor.phone_number) if vendor.phone_number else None
+                ),
+                "whatsapp_number": (
+                    str(vendor.whatsapp_number) if vendor.whatsapp_number else None
+                ),
+                "instagram_handle": vendor.instagram_handle,
+                "tiktok_handle": vendor.tiktok_handle,
+                "is_verified": vendor.is_verified,
+                "subscription_status": vendor.subscription_status,
+                "subscription_start": vendor.subscription_start,
+                "subscription_expiry": vendor.subscription_expiry,
+            }
+        return None
+
+
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating user profile information (excluding profile picture)"""
+
+    class Meta:
+        model = UserProfile
+        fields = [
+            "first_name",
+            "last_name",
+            "hostel",
+        ]
+        extra_kwargs = {
+            "first_name": {"required": False},
+            "last_name": {"required": False},
+            "hostel": {"required": False},
+        }
+
+    def validate_hostel(self, value):
+        """Validate hostel choice"""
+        if value and value not in [choice[0] for choice in UserProfile.HOSTEL_CHOICES]:
+            raise serializers.ValidationError(
+                f"Invalid hostel choice. Must be one of: {[choice[0] for choice in UserProfile.HOSTEL_CHOICES]}"
+            )
+        return value
+
+
+class ProfilePictureUploadSerializer(serializers.ModelSerializer):
+    """Dedicated serializer for profile picture uploads"""
+
+    class Meta:
+        model = UserProfile
+        fields = ["profile_picture"]
+        extra_kwargs = {
+            "profile_picture": {
+                "required": True,
+                "help_text": "Upload a profile picture (JPG, PNG, GIF, SVG supported)",
+            },
+        }
+
+    def validate_profile_picture(self, value):
+        """Validate uploaded profile picture"""
+        if value:
+            # Check file size (limit to 5MB)
+            if value.size > 5 * 1024 * 1024:
+                raise serializers.ValidationError(
+                    "Profile picture file size cannot exceed 5MB."
+                )
+
+            # Check file type
+            valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg"]
+            import os
+
+            ext = os.path.splitext(value.name)[1].lower()
+            if ext not in valid_extensions:
+                raise serializers.ValidationError(
+                    f"Invalid file type. Supported formats: {', '.join(valid_extensions)}"
+                )
+
+            # Additional validation for SVG files
+            if ext == ".svg":
+                # Basic SVG content validation
+                try:
+                    content = value.read()
+                    value.seek(0)  # Reset file pointer
+
+                    # Check if it's a valid SVG by looking for SVG tags
+                    content_str = content.decode("utf-8", errors="ignore")
+                    if not (
+                        "<svg" in content_str.lower()
+                        and "</svg>" in content_str.lower()
+                    ):
+                        raise serializers.ValidationError(
+                            "Invalid SVG file. File must contain valid SVG content."
+                        )
+                except Exception:
+                    raise serializers.ValidationError(
+                        "Invalid SVG file. Unable to process the file."
+                    )
+
+        return value
 
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -47,6 +176,24 @@ class SignupSerializer(serializers.ModelSerializer):
 
 
 class VendorRegisterSerializer(serializers.ModelSerializer):
+    # Store logo can be either a URL string or an uploaded file
+    store_logo = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="URL to a logo image (optional when sending JSON)",
+    )
+
+    def to_internal_value(self, data):
+        # If store_logo is a file upload, remove it from data so CharField doesn't validate it
+        # We'll handle the file in create() method
+        request = self.context.get("request")
+        if request and hasattr(request, "FILES") and "store_logo" in request.FILES:
+            # Make a copy of data and remove store_logo to avoid CharField validation
+            data = data.copy() if hasattr(data, "copy") else dict(data)
+            data.pop("store_logo", None)
+
+        return super().to_internal_value(data)
+
     store_name = serializers.CharField(
         max_length=255, help_text="The name of your store (required)"
     )
@@ -68,6 +215,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = VendorProfile
         fields = [
+            "store_logo",
             "store_name",
             "account_number",
             "bank_code",
@@ -199,8 +347,15 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context["request"]
+        # Extract and remove fields we will handle manually
         account_number = validated_data.pop("account_number")
         bank_code = validated_data.pop("bank_code")
+        store_logo_url = validated_data.pop("store_logo", None)
+
+        # Check if an uploaded file was provided (multipart/form-data)
+        file_logo = None
+        if hasattr(request, "FILES") and request.FILES.get("store_logo"):
+            file_logo = request.FILES.get("store_logo")
 
         # Handle phone numbers - only set if provided and not empty
         phone_number = validated_data.pop("phone_number", None)
@@ -223,12 +378,13 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                 # If no basic plan exists, create one or use any active plan
                 default_plan = VendorPlan.objects.filter(is_active=True).first()
 
-            # Step 2: Create the vendor profile first (safer approach)
+            # Step 2: Create the vendor profile with trial period
             vendor_data = {
                 "user": request.user,
-                "subscription_expiry": timezone.now() + timedelta(days=30),
                 "plan": default_plan,
-                "subscription_status": "active",
+                "subscription_status": "trial",  # Start with trial
+                "trial_start": timezone.now(),
+                "trial_end": timezone.now() + timedelta(days=14),  # 14-day trial
                 "is_verified": True,  # Auto-verify new vendors for now
                 **validated_data,
             }
@@ -247,6 +403,69 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
             vendor = VendorProfile.objects.create(**vendor_data)
 
+            # Log trial creation
+            from .models import SubscriptionHistory
+
+            SubscriptionHistory.log_event(
+                vendor=vendor,
+                event_type="trial_started",
+                new_plan=default_plan,
+                notes="14-day trial period started on vendor registration",
+            )
+
+            # If a file was uploaded, validate and save it. Otherwise, try the URL path.
+            if file_logo:
+                # Basic validation: size and extension
+                max_size = 5 * 1024 * 1024
+                if hasattr(file_logo, "size") and file_logo.size > max_size:
+                    raise serializers.ValidationError(
+                        {"store_logo": ["File size cannot exceed 5MB."]}
+                    )
+
+                valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg"]
+                name = getattr(file_logo, "name", "store_logo")
+                ext = os.path.splitext(name)[1].lower()
+                if ext == "" and hasattr(file_logo, "content_type"):
+                    # attempt to infer extension from content_type (very basic)
+                    if file_logo.content_type == "image/svg+xml":
+                        ext = ".svg"
+
+                if ext not in valid_extensions:
+                    raise serializers.ValidationError(
+                        {
+                            "store_logo": [
+                                f"Unsupported file type '{ext}'. Supported: {', '.join(valid_extensions)}"
+                            ]
+                        }
+                    )
+
+                # Save uploaded file to ImageField
+                vendor.store_logo.save(name, file_logo, save=True)
+
+            elif store_logo_url:
+                try:
+                    resp = requests.get(store_logo_url, timeout=6)
+                    if resp.status_code == 200:
+                        parsed = urlparse(store_logo_url)
+                        filename = (
+                            os.path.basename(parsed.path)
+                            or f"store_logo_{vendor.pk}.png"
+                        )
+                        # Ensure filename has an extension
+                        if not os.path.splitext(filename)[1]:
+                            filename = f"{filename}.png"
+                        vendor.store_logo.save(
+                            filename, ContentFile(resp.content), save=True
+                        )
+                    else:
+                        print(
+                            f"[userprofile] Failed to fetch store_logo from {store_logo_url}: HTTP {resp.status_code}"
+                        )
+                except Exception as logo_exc:
+                    print(
+                        f"[userprofile] Error fetching store_logo from {store_logo_url}: {logo_exc}"
+                    )
+
             # Step 3: Mark the user as a vendor
             request.user.is_vendor = True
             request.user.save()
@@ -255,18 +474,10 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
             try:
                 create_paystack_subaccount(vendor, account_number, bank_code)
             except Exception as paystack_error:
-                # If Paystack fails, we still have the vendor but log the error
-                # The vendor can retry linking their account later
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.error(
-                    f"Failed to create Paystack subaccount for vendor {vendor.pk}: {paystack_error}"
+                # If Paystack fails, we still have the vendor. Print error so devs see it.
+                print(
+                    f"[userprofile] Failed to create Paystack subaccount for vendor {vendor.pk}: {paystack_error}"
                 )
-
-                # You could also set a flag to indicate incomplete setup
-                # vendor.paystack_setup_complete = False
-                # vendor.save()
 
                 # Don't raise the error - let the vendor registration succeed
                 pass
@@ -384,6 +595,7 @@ class VendorListSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source="user.user_name", read_only=True)
     plan_name = serializers.CharField(source="plan.name", read_only=True)
     product_count = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = VendorProfile
@@ -403,6 +615,7 @@ class VendorListSerializer(serializers.ModelSerializer):
             "subscription_start",
             "subscription_expiry",
             "product_count",
+            "average_rating",
         ]
 
     def get_product_count(self, obj):
@@ -410,3 +623,81 @@ class VendorListSerializer(serializers.ModelSerializer):
         return Product.objects.filter(
             vendor=obj, status=Product.ACTIVE, stock=Product.IN_STOCK
         ).count()
+
+    def get_average_rating(self, obj):
+        """Calculate average rating across all vendor's products"""
+        from django.db.models import Avg
+        from store.models import Review
+
+        # Get all reviews for all products belonging to this vendor
+        vendor_reviews = Review.objects.filter(
+            product__vendor=obj, approved_review=True
+        ).aggregate(avg_rating=Avg("rating"))
+
+        avg_rating = vendor_reviews["avg_rating"]
+        return round(avg_rating, 1) if avg_rating is not None else 0.0
+
+
+class VendorPlanSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VendorPlan
+        fields = [
+            "id",
+            "name",
+            "price",
+            "max_products",
+            "paystack_plan_code",
+            "is_active",
+        ]
+        read_only_fields = ["id", "paystack_plan_code"]
+
+
+class SubscriptionInitiateSerializer(serializers.Serializer):
+    plan_id = serializers.IntegerField(
+        help_text="ID of the vendor plan to subscribe to"
+    )
+
+    def validate_plan_id(self, value):
+        try:
+            plan = VendorPlan.objects.get(id=value, is_active=True)
+            return value
+        except VendorPlan.DoesNotExist:
+            raise serializers.ValidationError("Invalid or inactive plan selected.")
+
+
+class SubscriptionResponseSerializer(serializers.Serializer):
+    authorization_url = serializers.URLField(help_text="Paystack payment URL")
+    access_code = serializers.CharField(help_text="Paystack access code")
+    reference = serializers.CharField(help_text="Payment reference")
+    message = serializers.CharField(help_text="Success message")
+
+
+class SubscriptionHistorySerializer(serializers.ModelSerializer):
+    """Serializer for subscription history events"""
+
+    vendor_name = serializers.CharField(source="vendor.store_name", read_only=True)
+    previous_plan_name = serializers.CharField(
+        source="previous_plan.name", read_only=True
+    )
+    new_plan_name = serializers.CharField(source="new_plan.name", read_only=True)
+    event_display = serializers.CharField(
+        source="get_event_type_display", read_only=True
+    )
+
+    class Meta:
+        model = SubscriptionHistory
+        fields = [
+            "id",
+            "event_type",
+            "event_display",
+            "vendor_name",
+            "previous_plan_name",
+            "new_plan_name",
+            "previous_status",
+            "new_status",
+            "amount",
+            "payment_reference",
+            "notes",
+            "created_at",
+        ]
+        read_only_fields = fields

@@ -7,7 +7,11 @@ from django.http import FileResponse, JsonResponse, HttpResponse
 from .models import Product, Category, Review, OrderItem, Order, Payment
 from .forms import ReviewForm
 from userprofile.models import VendorProfile, UserProfile
+from userprofile.email_utils import send_receipt_email
 from faker import Faker
+import logging
+
+logger = logging.getLogger(__name__)
 import random
 from .cart import Cart
 from .forms import OrderForm
@@ -338,7 +342,24 @@ def paystack_callback(request):
         order = payment.order
         order.is_paid = True
         order.status = "completed"
+
+        # Reduce stock for all ordered items
+        for item in order.items.all():
+            item.product.reduce_stock(item.quantity)
+
         order.save()
+
+        # Send receipt email
+        try:
+            send_receipt_email(order)
+            messages.success(
+                request, "Payment successful! Receipt email sent to your inbox."
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to send receipt email for order {order.ref}: {str(e)}"
+            )
+            messages.success(request, "Payment successful!")
 
         if "cart" in request.session:
             cart = Cart(request)

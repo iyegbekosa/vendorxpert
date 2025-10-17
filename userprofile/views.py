@@ -8,6 +8,10 @@ from django.contrib.auth import login
 from django.contrib import messages
 from store.forms import ProductForm
 from django.utils.text import slugify
+from .email_utils import send_welcome_email, send_vendor_welcome_email
+import logging
+
+logger = logging.getLogger(__name__)
 from store.utils import create_paystack_subaccount
 from django.db import transaction
 from django.views.decorators.http import require_POST
@@ -126,6 +130,24 @@ def register_vendor(request):
             # Optional: rollback or log
             print("Subaccount error:", e)
 
+        # Send vendor welcome email
+        try:
+            send_vendor_welcome_email(vendor)
+            messages.success(
+                request,
+                f"Vendor account created successfully! Welcome email sent to {vendor.user.email}",
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to send vendor welcome email to {vendor.user.email}: {str(e)}"
+            )
+            messages.success(request, "Vendor account created successfully!")
+
+        return redirect("frontpage")  # or wherever vendors should go after registration
+
+    # Handle GET request - show registration form
+    return render(request, "userprofile/register_vendor.html")
+
 
 def signup(request):
     if request.method == "POST":
@@ -135,7 +157,18 @@ def signup(request):
             user.set_password(form.cleaned_data["password"])
             user.save()
             login(request, user)
-            UserProfile.objects.create(user=user)  # If you want an associated profile
+
+            # Send welcome email in the background
+            try:
+                send_welcome_email(user)
+                messages.success(
+                    request,
+                    "Account created successfully! Welcome email sent to your inbox.",
+                )
+            except Exception as e:
+                # Log the error but don't fail the registration
+                logger.error(f"Failed to send welcome email to {user.email}: {str(e)}")
+                messages.success(request, "Account created successfully!")
 
             return redirect("frontpage")
     else:

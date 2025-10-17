@@ -1,0 +1,37 @@
+Your Store is Live on VendorXpert!
+
+Hi {{ full_name }},
+
+Congratulations! You've successfully joined VendorXpert as a vendor.
+Your store "{{ store_name }}" is now ready to reach thousands of potential customers!
+
+What you can do now:
+🚀 Add and manage your products
+🚀 Set competitive prices and descriptions
+🚀 Track your orders and sales
+🚀 Communicate directly with customers
+🚀 Access detailed analytics and insights
+🚀 Manage your subscription and payments
+
+Tips for Success:
+- High-quality photos: Upload clear, attractive product images
+- Detailed descriptions: Help customers understand what you're offering
+- Competitive pricing: Research market prices for similar products
+- Quick responses: Reply to customer inquiries promptly
+- Reliable fulfillment: Deliver orders on time and in good condition
+
+Ready to make your first sale? Start by adding your first product to your store!
+
+Vendor Support:
+- Email support: {{ support_email }}
+- Check out our vendor resources and guides
+- Join our vendor community forum
+- Access training materials and best practices
+
+We're excited to see your business grow with VendorXpert!
+
+The VendorXpert Team
+
+---
+You received this email because you registered as a vendor on VendorXpert.
+Questions? Contact us at {{ support_email }}

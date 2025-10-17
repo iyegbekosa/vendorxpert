@@ -3,11 +3,15 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Product, Category, Payment, OrderItem
+from .models import Product, Category, Payment, OrderItem, Review, Order
+from userprofile.email_utils import send_receipt_email, send_vendor_order_notification
+import logging
+
+logger = logging.getLogger(__name__)
 from .serializers import (
     ProductSerializer,
     ReviewSerializer,
-    Review,
+    ReviewDetailSerializer,
     CartItemSerializer,
     CheckoutSerializer,
 )
@@ -378,6 +382,130 @@ def delete_review_api(request, review_id):
     return Response(
         {"success": "Review deleted successfully."}, status=status.HTTP_204_NO_CONTENT
     )
+
+
+@swagger_auto_schema(
+    method="put",
+    operation_description="Edit/update an existing review",
+    request_body=ReviewSerializer,
+    manual_parameters=[
+        openapi.Parameter(
+            "review_id",
+            openapi.IN_PATH,
+            description="Review ID to edit",
+            type=openapi.TYPE_INTEGER,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Review successfully updated",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid data"),
+        401: openapi.Response(description="Authentication required"),
+        403: openapi.Response(description="Not authorized to edit this review"),
+        404: openapi.Response(description="Review not found"),
+    },
+    tags=["Reviews"],
+)
+@api_view(["PUT"])
+@permission_classes([IsAuthenticated])
+def edit_review_api(request, review_id):
+    """
+    Edit/update an existing review.
+
+    Only the author of the review can edit it. Allows updating rating, text, and subject.
+    """
+    review = get_object_or_404(Review, id=review_id)
+
+    if review.author != request.user:
+        return Response(
+            {"error": "You are not authorized to edit this review."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    serializer = ReviewSerializer(review, data=request.data, partial=True)
+
+    if serializer.is_valid():
+        serializer.save()
+        return Response(
+            {"success": True, "message": "Review updated successfully."},
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_description="Get all reviews for a specific product",
+    manual_parameters=[
+        openapi.Parameter(
+            "pk",
+            openapi.IN_PATH,
+            description="Product ID",
+            type=openapi.TYPE_INTEGER,
+        ),
+        openapi.Parameter(
+            "page",
+            openapi.IN_QUERY,
+            description="Page number for pagination",
+            type=openapi.TYPE_INTEGER,
+            required=False,
+        ),
+    ],
+    responses={
+        200: openapi.Response(
+            description="Paginated list of product reviews",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "next": openapi.Schema(type=openapi.TYPE_STRING, format="uri"),
+                    "previous": openapi.Schema(type=openapi.TYPE_STRING, format="uri"),
+                    "results": openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    ),
+                },
+            ),
+        ),
+        404: openapi.Response(description="Product not found"),
+    },
+    tags=["Reviews"],
+)
+@api_view(["GET"])
+def get_product_reviews_api(request, pk):
+    """
+    Get all reviews for a specific product.
+
+    Returns a paginated list of all approved reviews for the specified product.
+    """
+    print(f"Debug: Looking for product with pk={pk}, type={type(pk)}")
+    try:
+        product = Product.objects.get(pk=pk)
+        print(f"Debug: Found product: {product}")
+    except Product.DoesNotExist:
+        print(f"Debug: Product with pk={pk} does not exist")
+        return Response({"error": f"Product with ID {pk} not found"}, status=404)
+
+    reviews = Review.objects.filter(product=product, approved_review=True).order_by(
+        "-created_date"
+    )
+    print(f"Debug: Found {reviews.count()} reviews")
+
+    paginator = StandardResultsPagination()
+    result_page = paginator.paginate_queryset(reviews, request)
+
+    serializer = ReviewDetailSerializer(result_page, many=True)
+
+    return paginator.get_paginated_response(serializer.data)
 
 
 @swagger_auto_schema(
@@ -913,6 +1041,22 @@ def paystack_callback_api(request):
             order.status = "completed"
         order.save()
 
+        # Send receipt email to customer
+        try:
+            send_receipt_email(order)
+            logger.info(f"Receipt email sent successfully for order {order.id}")
+        except Exception as e:
+            logger.error(f"Failed to send receipt email for order {order.id}: {e}")
+
+        # Send order notification email to vendor
+        try:
+            send_vendor_order_notification(order)
+            logger.info(f"Vendor notification sent successfully for order {order.id}")
+        except Exception as e:
+            logger.error(
+                f"Failed to send vendor notification for order {order.id}: {e}"
+            )
+
         cart = Cart(request)
         cart.clear()
 
@@ -984,7 +1128,32 @@ def paystack_webhook_api(request):
                     if order:
                         order.is_paid = True
                         order.status = "completed"
+
+                        # Reduce stock for all ordered items
+                        for item in order.items.all():
+                            item.product.reduce_stock(item.quantity)
+
                         order.save()
+
+                        # Send receipt email for the completed order
+                        try:
+                            send_receipt_email(order)
+                            logger.info(f"Receipt email sent for order {order.ref}")
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to send receipt email for order {order.ref}: {str(e)}"
+                            )
+
+                        # Send order notification email to vendor
+                        try:
+                            send_vendor_order_notification(order)
+                            logger.info(
+                                f"Vendor notification sent for order {order.ref}"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to send vendor notification for order {order.ref}: {str(e)}"
+                            )
 
                         # Clear the user's cart items for this order
                         # Note: We can't clear the session-based cart from webhook
@@ -1291,6 +1460,17 @@ def verify_payment_api(request):
         cart = Cart(request)
         cart.clear()
 
+        # Send receipt email in the background
+        try:
+            send_receipt_email(order)
+            email_message = "Receipt email sent successfully!"
+        except Exception as e:
+            # Log the error but don't fail the payment verification
+            logger.error(
+                f"Failed to send receipt email for order {order.ref}: {str(e)}"
+            )
+            email_message = "Payment verified (receipt email failed to send)."
+
         # Get order items with product details
         order_items = OrderItem.objects.filter(order=order).select_related("product")
         items_data = []
@@ -1315,7 +1495,7 @@ def verify_payment_api(request):
             {
                 "success": True,
                 "status": "paid",
-                "message": "Payment verified successfully",
+                "message": f"Payment verified successfully! {email_message}",
                 "order": {
                     "ref": order.ref,
                     "total_cost": order.total_cost,
@@ -1428,9 +1608,26 @@ def order_history_api(request):
         items_data = []
 
         for item in order_items:
+            # Check if the user has reviewed this product
+            user_review = Review.objects.filter(
+                product=item.product, author=user_profile
+            ).first()
+
+            review_data = None
+            if user_review:
+                review_data = {
+                    "id": user_review.pk,
+                    "rating": user_review.rating,
+                    "text": user_review.text,
+                    "subject": user_review.subject,
+                    "created_date": user_review.created_date.isoformat(),
+                    "approved_review": user_review.approved_review,
+                }
+
             items_data.append(
                 {
                     "product": {
+                        "id": item.product.pk,
                         "title": item.product.title,
                         "slug": item.product.slug,
                         "price": item.product.price,
@@ -1439,6 +1636,7 @@ def order_history_api(request):
                     "quantity": item.quantity,
                     "price": item.price,
                     "fulfilled": item.fulfilled,
+                    "my_review": review_data,
                 }
             )
 

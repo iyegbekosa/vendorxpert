@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Receipt - VendorXpert</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 650px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+        }
+        .logo {
+            font-size: 28px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .receipt-title {
+            color: #27ae60;
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        .order-info {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        .info-item {
+            margin: 5px 0;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+        }
+        .items-table th {
+            background: #667eea;
+            color: white;
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: bold;
+        }
+        .items-table td {
+            padding: 12px 8px;
+            border-bottom: 1px solid #ddd;
+        }
+        .items-table tr:hover {
+            background-color: #f8f9fa;
+        }
+        .vendor-name {
+            font-size: 12px;
+            color: #666;
+            font-style: italic;
+        }
+        .total-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .total-amount {
+            font-size: 28px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .pickup-info {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .pickup-info h3 {
+            margin-top: 0;
+            color: #856404;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            color: #666;
+            font-size: 14px;
+        }
+        .thank-you {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        @media (max-width: 600px) {
+            .order-info {
+                grid-template-columns: 1fr;
+            }
+            .items-table {
+                font-size: 14px;
+            }
+            .items-table th,
+            .items-table td {
+                padding: 8px 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🛍️ VendorXpert</div>
+            <h1 class="receipt-title">Payment Successful! 🎉</h1>
+            <p>Thank you for your purchase, <strong>{{ user_name }}</strong>!</p>
+        </div>
+        
+        <div class="thank-you">
+            <h3>🎊 Order Confirmed!</h3>
+            <p>Your payment has been processed successfully and your order is being prepared.</p>
+        </div>
+        
+        <div class="order-info">
+            <div class="info-item">
+                <span class="info-label">Order Number:</span><br>
+                <strong>#{{ order_ref }}</strong>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Order Date:</span><br>
+                {{ order_date }}
+            </div>
+            <div class="info-item">
+                <span class="info-label">Customer:</span><br>
+                {{ customer_name }}
+            </div>
+            <div class="info-item">
+                <span class="info-label">Phone:</span><br>
+                {{ customer_phone }}
+            </div>
+        </div>
+        
+        <h3>📦 Order Details</h3>
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Qty</th>
+                    <th>Price</th>
+                    <th>Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>
+                        <strong>{{ item.product_name }}</strong><br>
+                        <span class="vendor-name">by {{ item.vendor_name }}</span>
+                    </td>
+                    <td>{{ item.quantity }}</td>
+                    <td>₦{{ item.unit_price|floatformat:2 }}</td>
+                    <td>₦{{ item.total_price|floatformat:2 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <div class="total-section">
+            <h3>💰 Total Amount Paid</h3>
+            <div class="total-amount">₦{{ total_amount|floatformat:2 }}</div>
+            <p>Payment processed successfully via Paystack</p>
+        </div>
+        
+        <div class="pickup-info">
+            <h3>📍 Pickup Information</h3>
+            <p><strong>Location:</strong> {{ pickup_location }}</p>
+            <p>Please bring this receipt and a valid ID when picking up your order.</p>
+            <p><strong>Contact:</strong> {{ customer_phone }}</p>
+        </div>
+        
+        <div class="content">
+            <h3>👥 Vendors in this Order</h3>
+            <p>Your order includes items from: <strong>{% for vendor in vendors_list %}{{ vendor }}{% if not forloop.last %}, {% endif %}{% endfor %}</strong></p>
+            <p>Each vendor will prepare their items and coordinate pickup at your selected location.</p>
+        </div>
+        
+        <div class="content">
+            <h3>🤝 Need Help?</h3>
+            <p>If you have any questions about your order or need assistance:</p>
+            <ul>
+                <li>📧 Email us at <a href="mailto:{{ support_email }}">{{ support_email }}</a></li>
+                <li>📞 Contact the vendor directly for order-specific questions</li>
+                <li>💬 Check your order status in the VendorXpert app</li>
+            </ul>
+        </div>
+        
+        <div class="content">
+            <h3>⭐ Enjoying VendorXpert?</h3>
+            <p>Don't forget to rate and review your purchases once you receive them. Your feedback helps other students and supports our vendors!</p>
+        </div>
+        
+        <div class="footer">
+            <p>Thank you for choosing VendorXpert!</p>
+            <p><strong>Happy Shopping!</strong> 🛍️</p>
+            
+            <p style="margin-top: 20px; font-size: 12px;">
+                This is an automated receipt for order #{{ order_ref }}.<br>
+                Questions? Contact us at {{ support_email }}
+            </p>
+        </div>
+    </div>
+</body>
+</html>

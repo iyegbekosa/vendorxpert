@@ -24,6 +24,23 @@ urlpatterns = [
 urlpatterns += [
     path("api/categories/", api_views.categories_list_api, name="categories_list_api"),
     path("api/products/", api_views.products_list_api, name="products_list_api"),
+    path("api/search/", api_views.search_api, name="search_api"),
+    path("api/add-review/<int:pk>/", api_views.add_review_api, name="add_review_api"),
+    path(
+        "api/product/<int:pk>/reviews/",
+        api_views.get_product_reviews_api,
+        name="get_product_reviews_api",
+    ),
+    path(
+        "api/edit-review/<int:review_id>/",
+        api_views.edit_review_api,
+        name="edit_review_api",
+    ),
+    path(
+        "api/delete-review/<int:review_id>/",
+        api_views.delete_review_api,
+        name="delete_review_api",
+    ),
     path(
         "api/product/<slug:category_slug>/<slug:slug>/",
         api_views.product_detail_api,
@@ -33,13 +50,6 @@ urlpatterns += [
         "api/category/<slug:slug>/",
         api_views.category_detail_api,
         name="category_detail_api",
-    ),
-    path("api/search/", api_views.search_api, name="search_api"),
-    path("api/add-review/<int:pk>/", api_views.add_review_api, name="add_review_api"),
-    path(
-        "api/delete-review/<int:review_id>/",
-        api_views.delete_review_api,
-        name="delete_review_api",
     ),
     path("api/cart/", api_views.cart_view_api, name="cart_view_api"),
     path("api/add_to_cart/", api_views.api_add_to_cart, name="add_to_cart"),
