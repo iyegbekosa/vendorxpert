@@ -706,6 +706,9 @@ def vendors_list_api(request):
                 type=openapi.TYPE_OBJECT,
                 properties={
                     "vendor_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "vendor_name": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="Vendor's full name"
+                    ),
                     "store_name": openapi.Schema(type=openapi.TYPE_STRING),
                     "store_description": openapi.Schema(type=openapi.TYPE_STRING),
                     "store_logo": openapi.Schema(
@@ -775,9 +778,15 @@ def my_store_api(request):
     average_rating = reviews_stats["average_rating"] or 0.0
     total_reviews = reviews_stats["total_reviews"] or 0
 
+    # Get vendor's full name
+    vendor_name = f"{request.user.first_name} {request.user.last_name}".strip()
+    if not vendor_name:
+        vendor_name = request.user.user_name
+
     # Prepare store information response
     store_data = {
         "vendor_id": vendor_profile.id,
+        "vendor_name": vendor_name,
         "store_name": vendor_profile.store_name,
         "store_description": vendor_profile.store_description,
         "store_logo": (
