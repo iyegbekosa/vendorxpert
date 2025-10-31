@@ -697,20 +697,42 @@ def vendors_list_api(request):
 
 @swagger_auto_schema(
     method="get",
-    operation_description="Get vendor's own products (requires vendor authentication)",
+    operation_description="Get vendor's own store information including store details, average rating, and product count",
     security=[{"Bearer": []}],
     responses={
         200: openapi.Response(
-            description="Vendor's products retrieved successfully",
+            description="Vendor's store information retrieved successfully",
             schema=openapi.Schema(
                 type=openapi.TYPE_OBJECT,
                 properties={
-                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
-                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
-                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
-                    "results": openapi.Schema(
-                        type=openapi.TYPE_ARRAY,
-                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                    "vendor_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "vendor_name": openapi.Schema(
+                        type=openapi.TYPE_STRING, description="Vendor's full name"
+                    ),
+                    "store_name": openapi.Schema(type=openapi.TYPE_STRING),
+                    "store_description": openapi.Schema(type=openapi.TYPE_STRING),
+                    "store_logo": openapi.Schema(
+                        type=openapi.TYPE_STRING, nullable=True
+                    ),
+                    "phone_number": openapi.Schema(
+                        type=openapi.TYPE_STRING, nullable=True
+                    ),
+                    "whatsapp_number": openapi.Schema(
+                        type=openapi.TYPE_STRING, nullable=True
+                    ),
+                    "instagram_handle": openapi.Schema(type=openapi.TYPE_STRING),
+                    "tiktok_handle": openapi.Schema(type=openapi.TYPE_STRING),
+                    "is_verified": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "average_rating": openapi.Schema(
+                        type=openapi.TYPE_NUMBER, description="Average rating (0.0-5.0)"
+                    ),
+                    "total_reviews": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "product_count": openapi.Schema(
+                        type=openapi.TYPE_INTEGER, description="Total active products"
+                    ),
+                    "subscription_status": openapi.Schema(type=openapi.TYPE_STRING),
+                    "subscription_expiry": openapi.Schema(
+                        type=openapi.TYPE_STRING, format="date-time", nullable=True
                     ),
                 },
             ),
@@ -723,20 +745,76 @@ def vendors_list_api(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, VendorFeatureAccess])
 def my_store_api(request):
+    """
+    Get vendor's own store information.
+
+    Returns comprehensive store details including:
+    - Store information (name, description, logo, contact details)
+    - Average rating and total reviews
+    - Product count (active products only)
+    - Subscription status
+
+    Does NOT return individual products - use separate endpoint for product listing.
+    """
     try:
         vendor_profile = request.user.vendor_profile
     except AttributeError:
         return Response({"error": "User is not a vendor."}, status=403)
 
-    products = Product.objects.filter(vendor=vendor_profile).exclude(
-        status=Product.DELETED
+    # Get product count (excluding deleted products)
+    product_count = (
+        Product.objects.filter(vendor=vendor_profile)
+        .exclude(status=Product.DELETED)
+        .count()
     )
 
-    paginator = StandardResultsPagination()
-    result_page = paginator.paginate_queryset(products, request)
+    # Calculate average rating and total reviews
+    from django.db.models import Avg, Count
 
-    serializer = ProductSerializer(result_page, many=True)
-    return paginator.get_paginated_response(serializer.data)
+    reviews_stats = Review.objects.filter(
+        product__vendor=vendor_profile, approved_review=True
+    ).aggregate(average_rating=Avg("rating"), total_reviews=Count("id"))
+
+    average_rating = reviews_stats["average_rating"] or 0.0
+    total_reviews = reviews_stats["total_reviews"] or 0
+
+    # Get vendor's full name
+    vendor_name = f"{request.user.first_name} {request.user.last_name}".strip()
+    if not vendor_name:
+        vendor_name = request.user.user_name
+
+    # Prepare store information response
+    store_data = {
+        "vendor_id": vendor_profile.id,
+        "vendor_name": vendor_name,
+        "store_name": vendor_profile.store_name,
+        "store_description": vendor_profile.store_description,
+        "store_logo": (
+            vendor_profile.store_logo.url if vendor_profile.store_logo else None
+        ),
+        "phone_number": (
+            str(vendor_profile.phone_number) if vendor_profile.phone_number else None
+        ),
+        "whatsapp_number": (
+            str(vendor_profile.whatsapp_number)
+            if vendor_profile.whatsapp_number
+            else None
+        ),
+        "instagram_handle": vendor_profile.instagram_handle,
+        "tiktok_handle": vendor_profile.tiktok_handle,
+        "is_verified": vendor_profile.is_verified,
+        "average_rating": round(average_rating, 1),
+        "total_reviews": total_reviews,
+        "product_count": product_count,
+        "subscription_status": vendor_profile.subscription_status,
+        "subscription_expiry": (
+            vendor_profile.subscription_expiry.isoformat()
+            if vendor_profile.subscription_expiry
+            else None
+        ),
+    }
+
+    return Response(store_data, status=status.HTTP_200_OK)
 
 
 @swagger_auto_schema(
