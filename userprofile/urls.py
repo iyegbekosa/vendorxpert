@@ -33,6 +33,11 @@ urlpatterns += [
         name="forgot_password_api",
     ),
     path(
+        "api/verify-reset-code/",
+        api_views.verify_reset_code_api,
+        name="verify_reset_code_api",
+    ),
+    path(
         "api/reset-password/", api_views.reset_password_api, name="reset_password_api"
     ),
     path("api/login", api_views.login_api, name="login_api"),

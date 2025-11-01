@@ -317,29 +317,30 @@ def forgot_password_api(request):
 
 @swagger_auto_schema(
     method="post",
-    operation_description="Reset password using verification code",
+    operation_description="Verify password reset code without changing password",
     security=[],
     request_body=openapi.Schema(
         type=openapi.TYPE_OBJECT,
-        required=["email", "code", "new_password"],
+        required=["email", "code"],
         properties={
             "email": openapi.Schema(type=openapi.TYPE_STRING, description="User email"),
             "code": openapi.Schema(
                 type=openapi.TYPE_STRING, description="6-digit reset code"
             ),
-            "new_password": openapi.Schema(
-                type=openapi.TYPE_STRING, description="New password"
-            ),
         },
     ),
     responses={
         200: openapi.Response(
-            description="Password reset successful",
+            description="Code verified successfully",
             schema=openapi.Schema(
                 type=openapi.TYPE_OBJECT,
                 properties={
                     "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
                     "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "reset_token": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        description="Temporary token for password reset",
+                    ),
                 },
             ),
         ),
@@ -348,24 +349,17 @@ def forgot_password_api(request):
     tags=["Authentication"],
 )
 @api_view(["POST"])
-def reset_password_api(request):
+def verify_reset_code_api(request):
     """
-    Reset password using the verification code sent via email.
+    Verify the password reset code without changing the password.
+    Returns a temporary token that can be used for the actual password reset.
     """
     email = request.data.get("email")
     code = request.data.get("code")
-    new_password = request.data.get("new_password")
 
-    if not email or not code or not new_password:
+    if not email or not code:
         return Response(
-            {"error": "email, code, and new_password are required"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    # Validate password strength
-    if len(new_password) < 6:
-        return Response(
-            {"error": "Password must be at least 6 characters long"},
+            {"error": "email and code are required"},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -392,6 +386,139 @@ def reset_password_api(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # Verify user exists
+    try:
+        user = UserProfile.objects.get(email=email)
+    except UserProfile.DoesNotExist:
+        return Response(
+            {"error": "User account not found"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Generate a temporary reset token (valid for 10 minutes)
+    import secrets
+
+    reset_token = secrets.token_urlsafe(32)
+
+    # Store the reset token in the verification payload
+    ev.payload = {
+        "reset_token": reset_token,
+        "verified_at": timezone.now().isoformat(),
+    }
+    ev.save()
+
+    logger.info(f"Password reset code verified for user {email}")
+
+    return Response(
+        {
+            "success": True,
+            "message": "Reset code verified successfully. You can now set a new password.",
+            "reset_token": reset_token,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Reset password using verified reset token",
+    security=[],
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["email", "reset_token", "new_password"],
+        properties={
+            "email": openapi.Schema(type=openapi.TYPE_STRING, description="User email"),
+            "reset_token": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="Reset token from verification step",
+            ),
+            "new_password": openapi.Schema(
+                type=openapi.TYPE_STRING, description="New password"
+            ),
+        },
+    ),
+    responses={
+        200: openapi.Response(
+            description="Password reset successful",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid token, expired, or other errors"),
+    },
+    tags=["Authentication"],
+)
+@api_view(["POST"])
+def reset_password_api(request):
+    """
+    Reset password using the verified reset token.
+    This endpoint should be called after verify_reset_code_api.
+    """
+    email = request.data.get("email")
+    reset_token = request.data.get("reset_token")
+    new_password = request.data.get("new_password")
+
+    if not email or not reset_token or not new_password:
+        return Response(
+            {"error": "email, reset_token, and new_password are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Validate password strength
+    if len(new_password) < 6:
+        return Response(
+            {"error": "Password must be at least 6 characters long"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Find verification record with the reset token
+    try:
+        ev = EmailVerification.objects.get(
+            email=email, verification_type="password_reset", is_used=False
+        )
+    except EmailVerification.DoesNotExist:
+        return Response(
+            {"error": "No valid password reset request found for this email"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if ev.is_expired():
+        return Response(
+            {"error": "Password reset session has expired"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Verify the reset token
+    stored_token = ev.payload.get("reset_token")
+    if not stored_token or stored_token != reset_token:
+        return Response(
+            {"error": "Invalid or expired reset token"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Check if token was verified recently (within 10 minutes)
+    verified_at_str = ev.payload.get("verified_at")
+    if verified_at_str:
+        from datetime import datetime
+
+        verified_at = datetime.fromisoformat(verified_at_str.replace("Z", "+00:00"))
+        if (
+            timezone.now() - verified_at.replace(tzinfo=timezone.utc)
+        ).total_seconds() > 600:  # 10 minutes
+            return Response(
+                {"error": "Reset token has expired. Please request a new reset code."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    else:
+        return Response(
+            {"error": "Reset token not properly verified"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     # Find and update user password
     try:
         user = UserProfile.objects.get(email=email)
@@ -408,7 +535,7 @@ def reset_password_api(request):
     # Mark verification as used
     ev.mark_used()
 
-    logger.info(f"Password reset successful for user {email}")
+    logger.info(f"Password reset completed successfully for user {email}")
 
     return Response(
         {
