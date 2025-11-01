@@ -503,7 +503,7 @@ class VendorProfileSerializer(serializers.ModelSerializer):
             vendor=obj,
             status=Product.ACTIVE,
             stock=Product.IN_STOCK,
-            vendor__subscription_status__in=["active", "grace"],
+            vendor__subscription_status__in=["active", "grace", "trial"],
         )
         return ProductSerializer(products, many=True).data
 
