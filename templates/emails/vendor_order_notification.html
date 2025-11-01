@@ -6,133 +6,252 @@
     <title>New Order Notification - VendorXprt</title>
     <style>
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             line-height: 1.6;
-            color: #333;
+            color: #333333;
             max-width: 650px;
             margin: 0 auto;
             padding: 20px;
-            background-color: #f8f9fa;
+            background-color: #FAFAFA;
         }
         .container {
             background: white;
-            border-radius: 10px;
-            padding: 30px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border: 1px solid #F2F2F2;
         }
         .header {
             text-align: center;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 2px solid #e74c3c;
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid #ECECEC;
         }
         .logo {
             font-size: 28px;
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 10px;
+            font-weight: 600;
+            color: #333333;
+            margin-bottom: 12px;
         }
         .notification-title {
-            color: #e74c3c;
+            color: #EF8650;
             font-size: 24px;
-            margin-bottom: 10px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .subtitle {
+            color: #525252;
+            font-size: 16px;
         }
         .order-highlight {
-            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            background: linear-gradient(135deg, #EF8650 0%, #E07642 100%);
             color: white;
-            padding: 20px;
-            border-radius: 10px;
+            padding: 24px;
+            border-radius: 12px;
             text-align: center;
-            margin: 20px 0;
+            margin: 24px 0;
+        }
+        .order-highlight h2 {
+            margin: 0 0 8px 0;
+            font-size: 20px;
+            font-weight: 600;
+        }
+        .order-highlight p {
+            margin: 0;
+            font-size: 15px;
+            opacity: 0.95;
         }
         .order-info {
-            background: #ecf0f1;
-            padding: 20px;
-            border-radius: 8px;
-            margin: 20px 0;
+            background: #FAFAFA;
+            padding: 24px;
+            border-radius: 12px;
+            margin: 24px 0;
+            border: 1px solid #F2F2F2;
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 15px;
+            gap: 20px;
         }
         .info-item {
-            margin: 5px 0;
+            margin: 8px 0;
         }
         .info-label {
-            font-weight: bold;
-            color: #2c3e50;
+            font-weight: 500;
+            color: #363636;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+        .info-value {
+            color: #333333;
+            font-size: 15px;
+            font-weight: 500;
+        }
+        .section-title {
+            color: #333333;
+            font-size: 18px;
+            font-weight: 600;
+            margin: 24px 0 16px 0;
         }
         .items-table {
             width: 100%;
             border-collapse: collapse;
-            margin: 20px 0;
+            margin: 16px 0 24px 0;
             background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #F2F2F2;
         }
         .items-table th {
-            background: #e74c3c;
-            color: white;
-            padding: 12px 8px;
+            background: #FAFAFA;
+            color: #363636;
+            padding: 16px 12px;
             text-align: left;
-            font-weight: bold;
+            font-weight: 500;
+            font-size: 14px;
+            border-bottom: 1px solid #F0F0F0;
         }
         .items-table td {
-            padding: 12px 8px;
-            border-bottom: 1px solid #ddd;
+            padding: 16px 12px;
+            border-bottom: 1px solid #F0F0F0;
+            color: #3A3A3A;
+            font-size: 15px;
+        }
+        .items-table tr:last-child td {
+            border-bottom: none;
         }
         .items-table tr:hover {
-            background-color: #f8f9fa;
+            background-color: #FAFAFA;
         }
         .earning-section {
-            background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+            background: linear-gradient(135deg, #EF8650 0%, #E07642 100%);
             color: white;
-            padding: 20px;
-            border-radius: 8px;
+            padding: 24px;
+            border-radius: 12px;
             text-align: center;
-            margin: 20px 0;
+            margin: 24px 0;
+        }
+        .earning-section h3 {
+            margin: 0 0 12px 0;
+            font-size: 18px;
+            font-weight: 600;
         }
         .earning-amount {
-            font-size: 24px;
-            font-weight: bold;
-            margin: 10px 0;
+            font-size: 28px;
+            font-weight: 600;
+            margin: 12px 0;
+        }
+        .earning-section p {
+            margin: 0;
+            font-size: 15px;
+            opacity: 0.95;
         }
         .action-info {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 20px 0;
+            background: #FFF8F0;
+            border: 1px solid #F2E6D6;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 24px 0;
         }
         .action-info h3 {
-            margin-top: 0;
-            color: #856404;
+            margin: 0 0 16px 0;
+            color: #363636;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .action-info p {
+            color: #525252;
+            margin: 8px 0;
+            font-size: 15px;
+        }
+        .action-info ul {
+            margin: 16px 0;
+            padding-left: 20px;
+        }
+        .action-info li {
+            color: #525252;
+            margin: 8px 0;
+            font-size: 15px;
         }
         .cta-button {
             display: inline-block;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #EF8650 0%, #E07642 100%);
             color: white;
-            padding: 15px 30px;
+            padding: 14px 28px;
             text-decoration: none;
-            border-radius: 25px;
-            font-weight: bold;
-            margin: 20px 0;
+            border-radius: 12px;
+            font-weight: 500;
+            font-size: 15px;
+            margin: 24px 0;
+            transition: transform 0.2s;
+        }
+        .cta-button:hover {
+            transform: translateY(-1px);
+            color: white;
+            text-decoration: none;
+        }
+        .content {
+            margin: 24px 0;
+        }
+        .content h3 {
+            color: #333333;
+            font-size: 18px;
+            font-weight: 600;
+            margin: 0 0 16px 0;
+        }
+        .content p {
+            color: #525252;
+            margin: 8px 0;
+            font-size: 15px;
+        }
+        .content ul {
+            margin: 16px 0;
+            padding-left: 20px;
+        }
+        .content li {
+            color: #525252;
+            margin: 8px 0;
+            font-size: 15px;
+        }
+        .content a {
+            color: #EF8650;
+            text-decoration: none;
+        }
+        .content a:hover {
+            text-decoration: underline;
         }
         .footer {
             text-align: center;
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #eee;
-            color: #666;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #ECECEC;
+            color: #737373;
             font-size: 14px;
         }
+        .footer p {
+            margin: 8px 0;
+        }
+        .footer strong {
+            color: #525252;
+        }
         @media (max-width: 600px) {
+            body {
+                padding: 16px;
+            }
+            .container {
+                padding: 24px;
+            }
             .order-info {
                 grid-template-columns: 1fr;
+                gap: 16px;
             }
             .items-table {
                 font-size: 14px;
             }
             .items-table th,
             .items-table td {
-                padding: 8px 4px;
+                padding: 12px 8px;
+            }
+            .earning-amount {
+                font-size: 24px;
             }
         }
     </style>
@@ -142,7 +261,7 @@
         <div class="header">
             <div class="logo">🏪 VendorXprt</div>
             <h1 class="notification-title">New Order Received! 🎉</h1>
-            <p>You've got a new customer, <strong>{{ vendor_name }}</strong>!</p>
+            <p class="subtitle">You've got a new customer, <strong>{{ vendor_name }}</strong>!</p>
         </div>
         
         <div class="order-highlight">
@@ -152,24 +271,24 @@
         
         <div class="order-info">
             <div class="info-item">
-                <span class="info-label">Order Number:</span><br>
-                <strong>#{{ order_ref }}</strong>
+                <div class="info-label">Order Number:</div>
+                <div class="info-value">#{{ order_ref }}</div>
             </div>
             <div class="info-item">
-                <span class="info-label">Order Date:</span><br>
-                {{ order_date }}
+                <div class="info-label">Order Date:</div>
+                <div class="info-value">{{ order_date }}</div>
             </div>
             <div class="info-item">
-                <span class="info-label">Customer:</span><br>
-                {{ customer_name }}
+                <div class="info-label">Customer:</div>
+                <div class="info-value">{{ customer_name }}</div>
             </div>
             <div class="info-item">
-                <span class="info-label">Phone:</span><br>
-                {{ customer_phone }}
+                <div class="info-label">Phone:</div>
+                <div class="info-value">{{ customer_phone }}</div>
             </div>
         </div>
         
-        <h3>📋 Your Items in this Order</h3>
+        <h3 class="section-title">📋 Your Items in this Order</h3>
         <table class="items-table">
             <thead>
                 <tr>
@@ -237,7 +356,7 @@
             <p>Thank you for being part of VendorXprt!</p>
             <p><strong>Keep up the great work!</strong> 🌟</p>
             
-            <p style="margin-top: 20px; font-size: 12px;">
+            <p style="margin-top: 20px; font-size: 12px; color: #737373;">
                 This notification is for order #{{ order_ref }}.<br>
                 Questions? Contact us at {{ support_email }}
             </p>
