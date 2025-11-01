@@ -2,7 +2,7 @@
 
 ## Overview
 
-The VendorXpert platform provides a subscription system that allows vendors to choose from different pricing tiers based on their business needs. Each tier offers different product limits and features.
+The VendorXprt platform provides a subscription system that allows vendors to choose from different pricing tiers based on their business needs. Each tier offers different product limits and features.
 
 ## Available Plans
 

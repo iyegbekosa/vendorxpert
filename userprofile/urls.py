@@ -12,6 +12,7 @@ urlpatterns = [
         name="toggle_fulfillment",
     ),
     path("signup", views.signup, name="signup"),
+    path("verify-signup", views.verify_signup, name="verify_signup"),
     path("logout", auth_views.LogoutView.as_view(), name="logout"),
     path(
         "login",
@@ -25,6 +26,9 @@ urlpatterns = [
 ]
 urlpatterns += [
     path("api/signup/", api_views.signup_api, name="signup_api"),
+    path("api/verify-signup/", api_views.verify_signup_api, name="verify_signup_api"),
+    path("api/forgot-password/", api_views.forgot_password_api, name="forgot_password_api"),
+    path("api/reset-password/", api_views.reset_password_api, name="reset_password_api"),
     path("api/login", api_views.login_api, name="login_api"),
     path("api/profile/", api_views.profile_api, name="profile_api"),
     path(

@@ -116,7 +116,7 @@ def test_direct_email_function():
 
 
 if __name__ == "__main__":
-    print("🚀 VendorXpert Welcome Email Testing")
+    print("🚀 VendorXprt Welcome Email Testing")
     print("=" * 60)
 
     # Test direct email function first

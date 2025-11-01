@@ -161,7 +161,7 @@ curl -X POST http://localhost:8000/api/profile/picture/ \\
 
 
 if __name__ == "__main__":
-    print("🏥 VendorXpert SVG Profile Picture Support")
+    print("🏥 VendorXprt SVG Profile Picture Support")
     print("=" * 50)
 
     print("\n⚠️  Before testing:")

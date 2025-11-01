@@ -42,7 +42,15 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import HttpResponse
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from .email_utils import send_welcome_email, send_vendor_welcome_email
+from .email_utils import (
+    send_welcome_email,
+    send_vendor_welcome_email,
+    send_verification_email,
+    send_password_reset_email,
+)
+from .models import EmailVerification, UserProfile
+from django.contrib.auth.hashers import make_password
+import random
 
 
 @swagger_auto_schema(
@@ -73,28 +81,342 @@ def signup_api(request):
     Creates a new user account with required fields: username, email, first_name, last_name, and password.
     Automatically logs the user in upon successful registration and sends a welcome email.
     """
+    # New flow: validate input, create a verification record and email a 6-digit code.
     serializer = SignupSerializer(data=request.data)
     if serializer.is_valid():
-        user = serializer.save()
-        login(request, user)
+        data = serializer.validated_data
+        email = data.get("email")
 
-        # Send welcome email in the background
+        # If a user already exists with this email, reject
+        if UserProfile.objects.filter(email=email).exists():
+            return Response(
+                {"error": "Email is already registered."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Generate 6-digit code
+        code = "".join(random.choices("0123456789", k=6))
+
+        # Store hashed password in payload so we don't keep plaintext
+        hashed = make_password(data.get("password"))
+
+        expires_at = timezone.now() + timedelta(minutes=15)
+
+        payload = {
+            "user_name": data.get("user_name"),
+            "first_name": data.get("first_name"),
+            "last_name": data.get("last_name"),
+            "password_hashed": hashed,
+        }
+
+        # Create or update verification record
+        EmailVerification.objects.update_or_create(
+            email=email,
+            verification_type='signup',
+            is_used=False,
+            defaults={
+                "code": code,
+                "payload": payload,
+                "expires_at": expires_at,
+            },
+        )
+
+        # Send the verification code
         try:
-            send_welcome_email(user)
+            send_verification_email(email, code, expires_at=expires_at)
         except Exception as e:
-            # Log the error but don't fail the registration
-            logger.error(f"Failed to send welcome email to {user.email}: {str(e)}")
+            logger.error(f"Failed to send verification email to {email}: {str(e)}")
 
         return Response(
             {
                 "success": True,
-                "user_id": user.id,
-                "message": "Account created successfully! Welcome email sent.",
+                "message": "Verification code sent to your email. Use it to complete registration.",
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_202_ACCEPTED,
         )
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Verify email with 6-digit code and create the user account",
+    security=[],
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["email", "code"],
+        properties={
+            "email": openapi.Schema(type=openapi.TYPE_STRING),
+            "code": openapi.Schema(type=openapi.TYPE_STRING),
+        },
+    ),
+    responses={
+        201: openapi.Response(description="User successfully created"),
+        400: openapi.Response(description="Invalid code or expired"),
+    },
+    tags=["Authentication"],
+)
+@api_view(["POST"])
+def verify_signup_api(request):
+    email = request.data.get("email")
+    code = request.data.get("code")
+
+    if not email or not code:
+        return Response(
+            {"error": "email and code are required"}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        ev = EmailVerification.objects.get(
+            email=email, 
+            verification_type='signup', 
+            is_used=False
+        )
+    except EmailVerification.DoesNotExist:
+        return Response(
+            {"error": "No pending verification found for this email."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if ev.is_expired():
+        return Response(
+            {"error": "Verification code has expired."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if ev.code != code:
+        return Response(
+            {"error": "Invalid verification code."}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Create the user now
+    payload = ev.payload
+    if UserProfile.objects.filter(email=email).exists():
+        ev.mark_used()
+        return Response(
+            {"error": "Email already registered."}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    user = UserProfile(
+        user_name=payload.get("user_name"),
+        email=email,
+        first_name=payload.get("first_name", ""),
+        last_name=payload.get("last_name", ""),
+    )
+    # Set hashed password directly
+    user.password = payload.get("password_hashed")
+    user.save()
+
+    # mark verification used
+    ev.mark_used()
+
+    # Log the user in and send welcome email
+    try:
+        login(request, user)
+    except Exception:
+        pass
+
+    try:
+        send_welcome_email(user)
+    except Exception as e:
+        logger.error(
+            f"Failed to send welcome email after verification to {email}: {str(e)}"
+        )
+
+    return Response(
+        {
+            "success": True,
+            "user_id": user.id,
+            "message": "Account created successfully.",
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Request password reset code via email",
+    security=[],
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["email"],
+        properties={
+            "email": openapi.Schema(type=openapi.TYPE_STRING, description="User email"),
+        },
+    ),
+    responses={
+        202: openapi.Response(
+            description="Password reset code sent",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid email or user not found"),
+    },
+    tags=["Authentication"],
+)
+@api_view(["POST"])
+def forgot_password_api(request):
+    """
+    Request a password reset code via email.
+    
+    Sends a 6-digit code to the user's email if the account exists.
+    """
+    email = request.data.get("email")
+    
+    if not email:
+        return Response(
+            {"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Check if user exists
+    try:
+        user = UserProfile.objects.get(email=email)
+    except UserProfile.DoesNotExist:
+        # Don't reveal whether email exists for security
+        return Response(
+            {
+                "success": True,
+                "message": "If an account with this email exists, a password reset code has been sent.",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+    
+    # Generate 6-digit code
+    code = "".join(random.choices("0123456789", k=6))
+    expires_at = timezone.now() + timedelta(minutes=15)
+    
+    # Create verification record for password reset
+    EmailVerification.objects.update_or_create(
+        email=email,
+        verification_type='password_reset',
+        is_used=False,
+        defaults={
+            "code": code,
+            "payload": {},  # Empty payload for password resets
+            "expires_at": expires_at,
+        },
+    )
+    
+    # Send password reset email
+    try:
+        send_password_reset_email(email, code, expires_at=expires_at)
+    except Exception as e:
+        logger.error(f"Failed to send password reset email to {email}: {str(e)}")
+    
+    return Response(
+        {
+            "success": True,
+            "message": "If an account with this email exists, a password reset code has been sent.",
+        },
+        status=status.HTTP_202_ACCEPTED,
+    )
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Reset password using verification code",
+    security=[],
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["email", "code", "new_password"],
+        properties={
+            "email": openapi.Schema(type=openapi.TYPE_STRING, description="User email"),
+            "code": openapi.Schema(type=openapi.TYPE_STRING, description="6-digit reset code"),
+            "new_password": openapi.Schema(type=openapi.TYPE_STRING, description="New password"),
+        },
+    ),
+    responses={
+        200: openapi.Response(
+            description="Password reset successful",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid code, expired, or other errors"),
+    },
+    tags=["Authentication"],
+)
+@api_view(["POST"])
+def reset_password_api(request):
+    """
+    Reset password using the verification code sent via email.
+    """
+    email = request.data.get("email")
+    code = request.data.get("code")
+    new_password = request.data.get("new_password")
+    
+    if not email or not code or not new_password:
+        return Response(
+            {"error": "email, code, and new_password are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Validate password strength
+    if len(new_password) < 6:
+        return Response(
+            {"error": "Password must be at least 6 characters long"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Find verification record
+    try:
+        ev = EmailVerification.objects.get(
+            email=email, 
+            verification_type='password_reset', 
+            is_used=False
+        )
+    except EmailVerification.DoesNotExist:
+        return Response(
+            {"error": "No valid password reset request found for this email"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    if ev.is_expired():
+        return Response(
+            {"error": "Password reset code has expired"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    if ev.code != code:
+        return Response(
+            {"error": "Invalid password reset code"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Find and update user password
+    try:
+        user = UserProfile.objects.get(email=email)
+    except UserProfile.DoesNotExist:
+        return Response(
+            {"error": "User account not found"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Update password
+    user.set_password(new_password)
+    user.save()
+    
+    # Mark verification as used
+    ev.mark_used()
+    
+    logger.info(f"Password reset successful for user {email}")
+    
+    return Response(
+        {
+            "success": True,
+            "message": "Password has been reset successfully. You can now login with your new password.",
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @swagger_auto_schema(

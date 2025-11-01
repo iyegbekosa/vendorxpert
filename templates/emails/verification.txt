@@ -1,0 +1,15 @@
+Subject: Your VendorXprt verification code
+
+Hi there,
+
+Your verification code is: {{ code }}
+
+This code will expire at {{ expires_at }} UTC.
+
+Please enter this code on the VendorXprt website to complete your registration.
+
+If you didn't request this code, you can safely ignore this email.
+
+---
+{{ site_name }}
+Support: {{ support_email }}

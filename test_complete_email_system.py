@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Complete Email System Test for VendorXpert
+Complete Email System Test for VendorXprt
 Tests all email functionality including templates, delivery, and error handling.
 """
 
@@ -295,7 +295,7 @@ def test_email_configuration():
 
 def run_all_tests():
     """Run all email system tests."""
-    print("🚀 Starting VendorXpert Email System Tests")
+    print("🚀 Starting VendorXprt Email System Tests")
     print("=" * 50)
 
     try:

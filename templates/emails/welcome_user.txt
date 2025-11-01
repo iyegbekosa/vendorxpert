@@ -1,12 +1,12 @@
-Welcome to VendorXpert, {{ user_name }}!
+Welcome to VendorXprt, {{ user_name }}!
 
 Hi {{ full_name }},
 
-We're thrilled to welcome you to the VendorXpert community!
+We're thrilled to welcome you to the VendorXprt community!
 
 You've just joined Nigeria's most innovative marketplace that connects students and vendors seamlessly.
 
-What you can do with VendorXpert:
+What you can do with VendorXprt:
 ✓ Browse products from verified local vendors
 ✓ Discover student-friendly deals and discounts  
 ✓ Shop conveniently within your campus
@@ -26,8 +26,8 @@ Interested in becoming a vendor? Learn more about our vendor program.
 
 Welcome aboard! We can't wait to see what you discover.
 
-The VendorXpert Team
+The VendorXprt Team
 
 ---
-You received this email because you signed up for VendorXpert.
+You received this email because you signed up for VendorXprt.
 If you have any questions, contact us at {{ support_email }}
