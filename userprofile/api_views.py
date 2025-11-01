@@ -112,7 +112,7 @@ def signup_api(request):
         # Create or update verification record
         EmailVerification.objects.update_or_create(
             email=email,
-            verification_type='signup',
+            verification_type="signup",
             is_used=False,
             defaults={
                 "code": code,
@@ -168,9 +168,7 @@ def verify_signup_api(request):
 
     try:
         ev = EmailVerification.objects.get(
-            email=email, 
-            verification_type='signup', 
-            is_used=False
+            email=email, verification_type="signup", is_used=False
         )
     except EmailVerification.DoesNotExist:
         return Response(
@@ -263,16 +261,16 @@ def verify_signup_api(request):
 def forgot_password_api(request):
     """
     Request a password reset code via email.
-    
+
     Sends a 6-digit code to the user's email if the account exists.
     """
     email = request.data.get("email")
-    
+
     if not email:
         return Response(
             {"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     # Check if user exists
     try:
         user = UserProfile.objects.get(email=email)
@@ -285,15 +283,15 @@ def forgot_password_api(request):
             },
             status=status.HTTP_202_ACCEPTED,
         )
-    
+
     # Generate 6-digit code
     code = "".join(random.choices("0123456789", k=6))
     expires_at = timezone.now() + timedelta(minutes=15)
-    
+
     # Create verification record for password reset
     EmailVerification.objects.update_or_create(
         email=email,
-        verification_type='password_reset',
+        verification_type="password_reset",
         is_used=False,
         defaults={
             "code": code,
@@ -301,13 +299,13 @@ def forgot_password_api(request):
             "expires_at": expires_at,
         },
     )
-    
+
     # Send password reset email
     try:
         send_password_reset_email(email, code, expires_at=expires_at)
     except Exception as e:
         logger.error(f"Failed to send password reset email to {email}: {str(e)}")
-    
+
     return Response(
         {
             "success": True,
@@ -326,8 +324,12 @@ def forgot_password_api(request):
         required=["email", "code", "new_password"],
         properties={
             "email": openapi.Schema(type=openapi.TYPE_STRING, description="User email"),
-            "code": openapi.Schema(type=openapi.TYPE_STRING, description="6-digit reset code"),
-            "new_password": openapi.Schema(type=openapi.TYPE_STRING, description="New password"),
+            "code": openapi.Schema(
+                type=openapi.TYPE_STRING, description="6-digit reset code"
+            ),
+            "new_password": openapi.Schema(
+                type=openapi.TYPE_STRING, description="New password"
+            ),
         },
     ),
     responses={
@@ -353,45 +355,43 @@ def reset_password_api(request):
     email = request.data.get("email")
     code = request.data.get("code")
     new_password = request.data.get("new_password")
-    
+
     if not email or not code or not new_password:
         return Response(
             {"error": "email, code, and new_password are required"},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     # Validate password strength
     if len(new_password) < 6:
         return Response(
             {"error": "Password must be at least 6 characters long"},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     # Find verification record
     try:
         ev = EmailVerification.objects.get(
-            email=email, 
-            verification_type='password_reset', 
-            is_used=False
+            email=email, verification_type="password_reset", is_used=False
         )
     except EmailVerification.DoesNotExist:
         return Response(
             {"error": "No valid password reset request found for this email"},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     if ev.is_expired():
         return Response(
             {"error": "Password reset code has expired"},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     if ev.code != code:
         return Response(
             {"error": "Invalid password reset code"},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     # Find and update user password
     try:
         user = UserProfile.objects.get(email=email)
@@ -400,16 +400,16 @@ def reset_password_api(request):
             {"error": "User account not found"},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     # Update password
     user.set_password(new_password)
     user.save()
-    
+
     # Mark verification as used
     ev.mark_used()
-    
+
     logger.info(f"Password reset successful for user {email}")
-    
+
     return Response(
         {
             "success": True,

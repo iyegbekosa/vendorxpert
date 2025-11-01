@@ -98,18 +98,20 @@ class EmailVerification(models.Model):
 
     For signup: Payload holds the pending user data (user_name, first_name, last_name and
     a hashed password) until the code is verified and the user is created.
-    
+
     For password reset: Payload can be empty or hold additional context.
     """
 
     VERIFICATION_TYPES = (
-        ('signup', 'Signup Verification'),
-        ('password_reset', 'Password Reset'),
+        ("signup", "Signup Verification"),
+        ("password_reset", "Password Reset"),
     )
 
     email = models.EmailField()
     code = models.CharField(max_length=6)
-    verification_type = models.CharField(max_length=20, choices=VERIFICATION_TYPES, default='signup')
+    verification_type = models.CharField(
+        max_length=20, choices=VERIFICATION_TYPES, default="signup"
+    )
     payload = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
@@ -118,7 +120,7 @@ class EmailVerification(models.Model):
     class Meta:
         ordering = ("-created_at",)
         # Allow multiple verification records per email (for different types)
-        unique_together = [['email', 'verification_type', 'is_used']]
+        unique_together = [["email", "verification_type", "is_used"]]
 
     def is_expired(self):
         return timezone.now() > self.expires_at

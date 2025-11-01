@@ -183,7 +183,7 @@ def signup(request):
 
             EmailVerification.objects.update_or_create(
                 email=email,
-                verification_type='signup',
+                verification_type="signup",
                 is_used=False,
                 defaults={
                     "code": code,
@@ -219,9 +219,7 @@ def verify_signup(request):
 
         try:
             ev = EmailVerification.objects.get(
-                email=email, 
-                verification_type='signup', 
-                is_used=False
+                email=email, verification_type="signup", is_used=False
             )
         except EmailVerification.DoesNotExist:
             messages.error(request, "No pending verification found for this email.")
