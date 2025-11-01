@@ -10,6 +10,7 @@ from phonenumber_field.modelfields import PhoneNumberField
 from datetime import timedelta
 from django.utils import timezone
 import uuid
+from cloudinary.models import CloudinaryField
 
 
 class CustomAccountManager(BaseUserManager):
@@ -74,11 +75,18 @@ class UserProfile(AbstractBaseUser, PermissionsMixin):
         null=True,
         help_text="Select your hostel",
     )
-    profile_picture = models.ImageField(
-        upload_to="profile_pictures/",
+    profile_picture = CloudinaryField(
+        'image',
+        folder="profile_pictures",
         blank=True,
         null=True,
         help_text="Upload your profile picture",
+        transformation={
+            'width': 300,
+            'height': 300,
+            'crop': 'fill',
+            'quality': 'auto:good'
+        }
     )
     start_date = models.DateTimeField(default=timezone.now)
     is_staff = models.BooleanField(default=False)
@@ -161,7 +169,18 @@ class VendorProfile(models.Model):
         UserProfile, on_delete=models.CASCADE, related_name="vendor_profile"
     )
     store_name = models.CharField(max_length=150)
-    store_logo = models.ImageField(upload_to="store_logo", blank=True, null=True)
+    store_logo = CloudinaryField(
+        'image',
+        folder="store_logos",
+        blank=True,
+        null=True,
+        transformation={
+            'width': 400,
+            'height': 400,
+            'crop': 'fill',
+            'quality': 'auto:good'
+        }
+    )
     store_description = models.TextField()
     phone_number = PhoneNumberField(unique=True, null=True, blank=True)
     subaccount_code = models.CharField(

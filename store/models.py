@@ -9,6 +9,7 @@ from django.db.models import Avg
 from phonenumber_field.modelfields import PhoneNumberField
 from django.conf import settings
 from django.utils.text import slugify
+from cloudinary.models import CloudinaryField
 
 
 class Category(models.Model):
@@ -54,11 +55,29 @@ class Product(models.Model):
     price = models.BigIntegerField()
     created_at = models.DateTimeField(auto_now=True)
     updated_at = models.DateTimeField(auto_now=True)
-    product_image = models.ImageField(
-        upload_to="uploads/product_image/", blank=True, null=True
+    product_image = CloudinaryField(
+        'image',
+        folder="product_images",
+        blank=True,
+        null=True,
+        transformation={
+            'width': 800,
+            'height': 600,
+            'crop': 'fill',
+            'quality': 'auto:good'
+        }
     )
-    thumbnail = models.ImageField(
-        upload_to="uploads/product_image/thumbnail", blank=True, null=True
+    thumbnail = CloudinaryField(
+        'image',
+        folder="product_thumbnails",
+        blank=True,
+        null=True,
+        transformation={
+            'width': 300,
+            'height': 300,
+            'crop': 'fill',
+            'quality': 'auto:good'
+        }
     )
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default=ACTIVE)
     stock = models.CharField(max_length=50, choices=STOCK_CHOICES, default=IN_STOCK)
@@ -76,40 +95,14 @@ class Product(models.Model):
     def __str__(self):
         return self.title
 
-    def make_thumbnail(self, product_image, size=(300, 300)):
-        img = Image.open(product_image)
-
-        # Convert RGBA to RGB if necessary (for PNG with transparency)
-        if img.mode in ("RGBA", "LA", "P"):
-            # Create a white background and paste the image onto it
-            background = Image.new("RGB", img.size, (255, 255, 255))
-            if img.mode == "P":
-                img = img.convert("RGBA")
-            background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
-            img = background
-        elif img.mode != "RGB":
-            img = img.convert("RGB")
-
-        img.thumbnail(size)
-
-        thumb_io = BytesIO()
-        img.save(thumb_io, "JPEG", quality=85)
-        name = product_image.name.replace("uploads/product_images/", "")
-        thumbnail = File(thumb_io, name=name)
-
-        return thumbnail
-
     def get_thumbnail(self):
+        """Get thumbnail URL from Cloudinary or product image"""
         if self.thumbnail:
             return self.thumbnail.url
+        elif self.product_image:
+            return self.product_image.url
         else:
-            if self.product_image:
-                self.thumbnail = self.make_thumbnail(self.product_image)
-                self.save()
-
-                return self.thumbnail.url
-            else:
-                return "https://placehold.co/600x400"
+            return "https://placehold.co/600x400"
 
     def average_rating(self):
         avg_rating = self.comments.filter(approved_review=True).aggregate(

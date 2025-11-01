@@ -834,17 +834,9 @@ def upload_profile_picture_api(request):
         print(f"DEBUG: Upload data: {upload_data}")
         print(f"DEBUG: Serializer validated data: {serializer.validated_data}")
 
-        # Delete old profile picture if it exists
-        if request.user.profile_picture:
-            try:
-                import os
-
-                if os.path.isfile(request.user.profile_picture.path):
-                    os.remove(request.user.profile_picture.path)
-            except (ValueError, FileNotFoundError):
-                # File doesn't exist or path is invalid, continue
-                pass
-
+        # Note: Cloudinary automatically handles old image replacement
+        # No need to manually delete old files
+        
         # Save new profile picture
         serializer.save()
 
@@ -905,7 +897,7 @@ def remove_profile_picture_api(request):
     """
     Remove the authenticated user's profile picture.
 
-    Sets the profile_picture field to None and deletes the file from storage.
+    Sets the profile_picture field to None. Cloudinary automatically handles file cleanup.
     """
     if not request.user.profile_picture:
         return Response(
@@ -913,17 +905,8 @@ def remove_profile_picture_api(request):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    # Delete the file from storage
-    try:
-        import os
-
-        if os.path.isfile(request.user.profile_picture.path):
-            os.remove(request.user.profile_picture.path)
-    except (ValueError, FileNotFoundError):
-        # File doesn't exist or path is invalid, continue
-        pass
-
     # Clear the profile picture field
+    # Note: Cloudinary automatically handles file cleanup when the field is cleared
     request.user.profile_picture = None
     request.user.save()
 
