@@ -836,7 +836,7 @@ def upload_profile_picture_api(request):
 
         # Note: Cloudinary automatically handles old image replacement
         # No need to manually delete old files
-        
+
         # Save new profile picture
         serializer.save()
 

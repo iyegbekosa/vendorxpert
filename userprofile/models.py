@@ -76,17 +76,17 @@ class UserProfile(AbstractBaseUser, PermissionsMixin):
         help_text="Select your hostel",
     )
     profile_picture = CloudinaryField(
-        'image',
+        "image",
         folder="profile_pictures",
         blank=True,
         null=True,
         help_text="Upload your profile picture",
         transformation={
-            'width': 300,
-            'height': 300,
-            'crop': 'fill',
-            'quality': 'auto:good'
-        }
+            "width": 300,
+            "height": 300,
+            "crop": "fill",
+            "quality": "auto:good",
+        },
     )
     start_date = models.DateTimeField(default=timezone.now)
     is_staff = models.BooleanField(default=False)
@@ -170,16 +170,16 @@ class VendorProfile(models.Model):
     )
     store_name = models.CharField(max_length=150)
     store_logo = CloudinaryField(
-        'image',
+        "image",
         folder="store_logos",
         blank=True,
         null=True,
         transformation={
-            'width': 400,
-            'height': 400,
-            'crop': 'fill',
-            'quality': 'auto:good'
-        }
+            "width": 400,
+            "height": 400,
+            "crop": "fill",
+            "quality": "auto:good",
+        },
     )
     store_description = models.TextField()
     phone_number = PhoneNumberField(unique=True, null=True, blank=True)

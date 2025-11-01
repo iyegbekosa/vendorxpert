@@ -56,28 +56,28 @@ class Product(models.Model):
     created_at = models.DateTimeField(auto_now=True)
     updated_at = models.DateTimeField(auto_now=True)
     product_image = CloudinaryField(
-        'image',
+        "image",
         folder="product_images",
         blank=True,
         null=True,
         transformation={
-            'width': 800,
-            'height': 600,
-            'crop': 'fill',
-            'quality': 'auto:good'
-        }
+            "width": 800,
+            "height": 600,
+            "crop": "fill",
+            "quality": "auto:good",
+        },
     )
     thumbnail = CloudinaryField(
-        'image',
+        "image",
         folder="product_thumbnails",
         blank=True,
         null=True,
         transformation={
-            'width': 300,
-            'height': 300,
-            'crop': 'fill',
-            'quality': 'auto:good'
-        }
+            "width": 300,
+            "height": 300,
+            "crop": "fill",
+            "quality": "auto:good",
+        },
     )
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default=ACTIVE)
     stock = models.CharField(max_length=50, choices=STOCK_CHOICES, default=IN_STOCK)
