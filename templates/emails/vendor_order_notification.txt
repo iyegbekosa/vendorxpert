@@ -1,4 +1,4 @@
-New Order Received - VendorXpert
+New Order Received - VendorXprt
 
 You've got a new customer, {{ vendor_name }}!
 
@@ -37,7 +37,7 @@ Need Support?
 - Access vendor support resources
 - Customer contact: {{ customer_phone }}
 
-Thank you for being part of VendorXpert!
+Thank you for being part of VendorXprt!
 Keep up the great work!
 
 ---

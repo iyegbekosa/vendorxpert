@@ -1,4 +1,4 @@
-VendorXpert - Payment Receipt
+VendorXprt - Payment Receipt
 
 Thank you for your purchase, {{ user_name }}!
 
@@ -26,9 +26,9 @@ Vendors in this order: {% for vendor in vendors_list %}{{ vendor }}{% if not for
 Need Help?
 - Email: {{ support_email }}
 - Contact vendor directly for order-specific questions
-- Check order status in VendorXpert app
+- Check order status in VendorXprt app
 
-Thank you for choosing VendorXpert!
+Thank you for choosing VendorXprt!
 
 ---
 This is an automated receipt for order #{{ order_ref }}.

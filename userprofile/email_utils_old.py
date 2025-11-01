@@ -1,5 +1,5 @@
 """
-Email utilities for VendorXpert application
+Email utilities for VendorXprt application
 """
 
 from django.core.mail import EmailMultiAlternatives
@@ -22,14 +22,14 @@ def send_welcome_email(user):
         bool: True if email sent successfully, False otherwise
     """
     try:
-        subject = "🎉 Welcome to VendorXpert - Your Journey Starts Here!"
+        subject = "🎉 Welcome to VendorXprt - Your Journey Starts Here!"
 
         # Create context for email template
         context = {
             "user_name": user.first_name or user.user_name,
             "full_name": f"{user.first_name} {user.last_name}".strip() or user.user_name,
             "email": user.email,
-            "site_name": "VendorXpert",
+            "site_name": "VendorXprt",
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
@@ -75,14 +75,14 @@ def send_vendor_welcome_email(vendor_profile):
     """
     try:
         user = vendor_profile.user
-        subject = "🎊 Welcome to VendorXpert - Your Store is Ready!"
+        subject = "🎊 Welcome to VendorXprt - Your Store is Ready!"
 
         context = {
             "user_name": user.first_name or user.user_name,
             "full_name": f"{user.first_name} {user.last_name}".strip() or user.user_name,
             "store_name": vendor_profile.store_name,
             "email": user.email,
-            "site_name": "VendorXpert",
+            "site_name": "VendorXprt",
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
@@ -94,7 +94,7 @@ def send_vendor_welcome_email(vendor_profile):
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Welcome Vendor - VendorXpert</title>
+            <title>Welcome Vendor - VendorXprt</title>
             <style>
                 body {{
                     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -173,7 +173,7 @@ def send_vendor_welcome_email(vendor_profile):
         <body>
             <div class="container">
                 <div class="header">
-                    <div class="logo">🏪 VendorXpert</div>
+                    <div class="logo">🏪 VendorXprt</div>
                     <h1 class="welcome-title">Your Store is Live! 🎊</h1>
                 </div>
                 
@@ -185,7 +185,7 @@ def send_vendor_welcome_email(vendor_profile):
                 <div class="content">
                     <p>Hi <strong>{context['full_name']}</strong>,</p>
                     
-                    <p>Congratulations! 🎉 You've successfully joined VendorXpert as a vendor. Your store "<strong>{context['store_name']}</strong>" is now ready to reach thousands of potential customers!</p>
+                    <p>Congratulations! 🎉 You've successfully joined VendorXprt as a vendor. Your store "<strong>{context['store_name']}</strong>" is now ready to reach thousands of potential customers!</p>
                     
                     <div class="features">
                         <h3>🛍️ What you can do now:</h3>
@@ -225,11 +225,11 @@ def send_vendor_welcome_email(vendor_profile):
                 </div>
                 
                 <div class="footer">
-                    <p>We're excited to see your business grow with VendorXpert!</p>
-                    <p><strong>The VendorXpert Team</strong> 💼</p>
+                    <p>We're excited to see your business grow with VendorXprt!</p>
+                    <p><strong>The VendorXprt Team</strong> 💼</p>
                     
                     <p style="margin-top: 20px; font-size: 12px;">
-                        You received this email because you registered as a vendor on VendorXpert.<br>
+                        You received this email because you registered as a vendor on VendorXprt.<br>
                         Questions? Contact us at {context['support_email']}
                     </p>
                 </div>
@@ -240,11 +240,11 @@ def send_vendor_welcome_email(vendor_profile):
 
         # Plain text fallback
         text_content = f"""
-        Your Store is Live on VendorXpert!
+        Your Store is Live on VendorXprt!
         
         Hi {context['full_name']},
         
-        Congratulations! You've successfully joined VendorXpert as a vendor.
+        Congratulations! You've successfully joined VendorXprt as a vendor.
         Your store "{context['store_name']}" is now ready to reach thousands of potential customers!
         
         What you can do now:
@@ -270,12 +270,12 @@ def send_vendor_welcome_email(vendor_profile):
         - Join our vendor community forum
         - Access training materials and best practices
         
-        We're excited to see your business grow with VendorXpert!
+        We're excited to see your business grow with VendorXprt!
         
-        The VendorXpert Team
+        The VendorXprt Team
         
         ---
-        You received this email because you registered as a vendor on VendorXpert.
+        You received this email because you registered as a vendor on VendorXprt.
         Questions? Contact us at {context['support_email']}
         """
 
@@ -319,7 +319,7 @@ def send_receipt_email(order):
             logger.error(f"No user email found for order {order.ref}")
             return False
 
-        subject = f"🧾 Your VendorXpert Receipt - Order #{order.ref}"
+        subject = f"🧾 Your VendorXprt Receipt - Order #{order.ref}"
 
         # Calculate order totals and get items
         from store.models import OrderItem
@@ -365,7 +365,7 @@ def send_receipt_email(order):
             "vendors_list": list(vendors_involved),
             "customer_phone": order.phone,
             "customer_name": f"{order.first_name} {order.last_name}",
-            "site_name": "VendorXpert",
+            "site_name": "VendorXprt",
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
@@ -376,7 +376,7 @@ def send_receipt_email(order):
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Order Receipt - VendorXpert</title>
+            <title>Order Receipt - VendorXprt</title>
             <style>
                 body {{
                     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -508,7 +508,7 @@ def send_receipt_email(order):
         <body>
             <div class="container">
                 <div class="header">
-                    <div class="logo">🛍️ VendorXpert</div>
+                    <div class="logo">🛍️ VendorXprt</div>
                     <h1 class="receipt-title">Payment Successful! 🎉</h1>
                     <p>Thank you for your purchase, <strong>{context['user_name']}</strong>!</p>
                 </div>
@@ -593,17 +593,17 @@ def send_receipt_email(order):
                     <ul>
                         <li>📧 Email us at <a href="mailto:{context['support_email']}">{context['support_email']}</a></li>
                         <li>📞 Contact the vendor directly for order-specific questions</li>
-                        <li>💬 Check your order status in the VendorXpert app</li>
+                        <li>💬 Check your order status in the VendorXprt app</li>
                     </ul>
                 </div>
                 
                 <div class="content">
-                    <h3>⭐ Enjoying VendorXpert?</h3>
+                    <h3>⭐ Enjoying VendorXprt?</h3>
                     <p>Don't forget to rate and review your purchases once you receive them. Your feedback helps other students and supports our vendors!</p>
                 </div>
                 
                 <div class="footer">
-                    <p>Thank you for choosing VendorXpert!</p>
+                    <p>Thank you for choosing VendorXprt!</p>
                     <p><strong>Happy Shopping!</strong> 🛍️</p>
                     
                     <p style="margin-top: 20px; font-size: 12px;">
@@ -618,7 +618,7 @@ def send_receipt_email(order):
 
         # Plain text fallback
         text_content = f"""
-        VendorXpert - Payment Receipt
+        VendorXprt - Payment Receipt
         
         Thank you for your purchase, {context['user_name']}!
         
@@ -651,9 +651,9 @@ def send_receipt_email(order):
         Need Help?
         - Email: {context['support_email']}
         - Contact vendor directly for order-specific questions
-        - Check order status in VendorXpert app
+        - Check order status in VendorXprt app
         
-        Thank you for choosing VendorXpert!
+        Thank you for choosing VendorXprt!
         
         ---
         This is an automated receipt for order #{context['order_ref']}.

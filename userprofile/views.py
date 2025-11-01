@@ -8,7 +8,16 @@ from django.contrib.auth import login
 from django.contrib import messages
 from store.forms import ProductForm
 from django.utils.text import slugify
-from .email_utils import send_welcome_email, send_vendor_welcome_email
+from .email_utils import (
+    send_welcome_email,
+    send_vendor_welcome_email,
+    send_verification_email,
+)
+from .models import EmailVerification
+from django.contrib.auth.hashers import make_password
+import random
+from django.utils import timezone
+from datetime import timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -153,28 +162,114 @@ def signup(request):
     if request.method == "POST":
         form = UserProfileSignupForm(request.POST)
         if form.is_valid():
-            user = form.save(commit=False)
-            user.set_password(form.cleaned_data["password"])
-            user.save()
-            login(request, user)
+            # New flow: create verification record and send 6-digit code to email
+            data = form.cleaned_data
+            email = data.get("email")
 
-            # Send welcome email in the background
+            if UserProfile.objects.filter(email=email).exists():
+                messages.error(request, "Email is already registered.")
+                return render(request, "userprofile/signup.html", {"form": form})
+
+            code = "".join(random.choices("0123456789", k=6))
+            hashed = make_password(data.get("password"))
+            expires_at = timezone.now() + timedelta(minutes=15)
+
+            payload = {
+                "user_name": data.get("user_name"),
+                "first_name": data.get("first_name"),
+                "last_name": data.get("last_name"),
+                "password_hashed": hashed,
+            }
+
+            EmailVerification.objects.update_or_create(
+                email=email,
+                verification_type="signup",
+                is_used=False,
+                defaults={
+                    "code": code,
+                    "payload": payload,
+                    "expires_at": expires_at,
+                },
+            )
+
             try:
-                send_welcome_email(user)
-                messages.success(
-                    request,
-                    "Account created successfully! Welcome email sent to your inbox.",
-                )
+                send_verification_email(email, code, expires_at=expires_at)
+                messages.success(request, "Verification code sent to your email.")
             except Exception as e:
-                # Log the error but don't fail the registration
-                logger.error(f"Failed to send welcome email to {user.email}: {str(e)}")
-                messages.success(request, "Account created successfully!")
+                logger.error(f"Failed to send verification email to {email}: {str(e)}")
+                messages.error(request, "Could not send verification email right now.")
 
-            return redirect("frontpage")
+            # Render a simple page where user can enter the verification code
+            return render(request, "userprofile/verify_signup.html", {"email": email})
     else:
         form = UserProfileSignupForm()
 
     return render(request, "userprofile/signup.html", {"form": form})
+
+
+def verify_signup(request):
+    """Handle verification code submission from web signup flow."""
+    if request.method == "POST":
+        email = request.POST.get("email")
+        code = request.POST.get("code")
+
+        if not email or not code:
+            messages.error(request, "Email and code are required.")
+            return render(request, "userprofile/verify_signup.html", {"email": email})
+
+        try:
+            ev = EmailVerification.objects.get(
+                email=email, verification_type="signup", is_used=False
+            )
+        except EmailVerification.DoesNotExist:
+            messages.error(request, "No pending verification found for this email.")
+            return render(request, "userprofile/verify_signup.html", {"email": email})
+
+        if ev.is_expired():
+            messages.error(request, "Verification code has expired.")
+            return render(request, "userprofile/verify_signup.html", {"email": email})
+
+        if ev.code != code:
+            messages.error(request, "Invalid verification code.")
+            return render(request, "userprofile/verify_signup.html", {"email": email})
+
+        payload = ev.payload
+        if UserProfile.objects.filter(email=email).exists():
+            ev.mark_used()
+            messages.error(request, "Email already registered.")
+            return redirect("login")
+
+        user = UserProfile(
+            user_name=payload.get("user_name"),
+            email=email,
+            first_name=payload.get("first_name", ""),
+            last_name=payload.get("last_name", ""),
+        )
+        user.password = payload.get("password_hashed")
+        user.save()
+
+        ev.mark_used()
+
+        try:
+            login(request, user)
+        except Exception:
+            pass
+
+        try:
+            send_welcome_email(user)
+        except Exception as e:
+            logger.error(
+                f"Failed to send welcome email after verification to {email}: {str(e)}"
+            )
+
+        messages.success(
+            request, "Account created successfully. You are now logged in."
+        )
+        return redirect("frontpage")
+
+    # GET: show a blank verification form
+    email = request.GET.get("email")
+    return render(request, "userprofile/verify_signup.html", {"email": email})
 
 
 @require_POST

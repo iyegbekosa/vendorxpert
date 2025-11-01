@@ -281,7 +281,15 @@ class CartItem(models.Model):
         ordering = ["-updated_at"]
 
     def __str__(self):
-        return f"{self.user.username} - {self.product.title} ({self.quantity})"
+        # UserProfile uses `user_name` (and `email`) instead of `username`.
+        # Use a safe display name with fallbacks to avoid AttributeError.
+        user_display = (
+            getattr(self.user, "username", None)
+            or getattr(self.user, "user_name", None)
+            or getattr(self.user, "email", None)
+            or str(self.user)
+        )
+        return f"{user_display} - {self.product.title} ({self.quantity})"
 
     @property
     def total_price(self):

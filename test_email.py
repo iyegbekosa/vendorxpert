@@ -38,11 +38,11 @@ def send_test_email():
     try:
         print("📧 Sending test email...")
 
-        subject = "VendorXpert - Email Configuration Test"
+        subject = "VendorXprt - Email Configuration Test"
         message = """
         Hello!
         
-        This is a test email from your VendorXpert Django application.
+        This is a test email from your VendorXprt Django application.
         
         If you're receiving this email, your Zoho mail configuration is working perfectly! 🎉
         
@@ -52,7 +52,7 @@ def send_test_email():
         - From: contact@vendorxprt.com
         
         Best regards,
-        VendorXpert Team
+        VendorXprt Team
         """
 
         from_email = settings.DEFAULT_FROM_EMAIL
@@ -87,14 +87,14 @@ def send_html_test_email():
     try:
         print("\n📧 Sending HTML test email...")
 
-        subject = "VendorXpert - HTML Email Test"
-        text_content = "This is a plain text email test from VendorXpert."
+        subject = "VendorXprt - HTML Email Test"
+        text_content = "This is a plain text email test from VendorXprt."
         html_content = """
         <html>
         <body>
-            <h2 style="color: #2c3e50;">🎉 VendorXpert Email Test</h2>
+            <h2 style="color: #2c3e50;">🎉 VendorXprt Email Test</h2>
             <p>Hello!</p>
-            <p>This is an <strong>HTML test email</strong> from your VendorXpert Django application.</p>
+            <p>This is an <strong>HTML test email</strong> from your VendorXprt Django application.</p>
             <div style="background-color: #ecf0f1; padding: 15px; border-radius: 5px; margin: 15px 0;">
                 <h3>Configuration Details:</h3>
                 <ul>
@@ -105,7 +105,7 @@ def send_html_test_email():
             </div>
             <p style="color: #27ae60;"><em>✅ Your email configuration is working perfectly!</em></p>
             <hr>
-            <p><small>Best regards,<br>VendorXpert Team</small></p>
+            <p><small>Best regards,<br>VendorXprt Team</small></p>
         </body>
         </html>
         """
@@ -137,7 +137,7 @@ def send_html_test_email():
 
 
 if __name__ == "__main__":
-    print("🚀 VendorXpert Email Configuration Test")
+    print("🚀 VendorXprt Email Configuration Test")
     print("=" * 50)
 
     # Test configuration

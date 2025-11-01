@@ -26,9 +26,9 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 schema_view = get_schema_view(
     openapi.Info(
-        title="VendorXpert API",
+        title="VendorXprt API",
         default_version="v1",
-        description="API documentation for VendorXpert - A comprehensive vendor management and e-commerce platform",
+        description="API documentation for VendorXprt - A comprehensive vendor management and e-commerce platform",
         terms_of_service="https://www.google.com/policies/terms/",
         contact=openapi.Contact(email="contact@vendorxpert.com"),
         license=openapi.License(name="BSD License"),

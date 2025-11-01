@@ -1,5 +1,5 @@
 """
-Email utilities for VendorXpert application
+Email utilities for VendorXprt application
 """
 
 from django.core.mail import EmailMultiAlternatives
@@ -7,6 +7,9 @@ from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 import logging
+import random
+from django.utils import timezone
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +25,7 @@ def send_welcome_email(user):
         bool: True if email sent successfully, False otherwise
     """
     try:
-        subject = "🎉 Welcome to VendorXpert - Your Journey Starts Here!"
+        subject = "🎉 Welcome to VendorXprt - Your Journey Starts Here!"
 
         # Create context for email template
         context = {
@@ -30,7 +33,7 @@ def send_welcome_email(user):
             "full_name": f"{user.first_name} {user.last_name}".strip()
             or user.user_name,
             "email": user.email,
-            "site_name": "VendorXpert",
+            "site_name": "VendorXprt",
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
@@ -62,6 +65,86 @@ def send_welcome_email(user):
         return False
 
 
+def send_verification_email(email, code, expires_at=None):
+    """Send a 6-digit verification code to `email`.
+
+    Returns True on success, False otherwise.
+    """
+    try:
+        subject = "Your VendorXprt verification code"
+        expires_at = expires_at or (timezone.now() + timedelta(minutes=15))
+
+        context = {
+            "code": code,
+            "email": email,
+            "site_name": "VendorXprt",
+            "expires_at": expires_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "support_email": settings.DEFAULT_FROM_EMAIL,
+        }
+
+        text_content = render_to_string("emails/verification.txt", context)
+        html_content = render_to_string("emails/verification.html", context)
+
+        email_msg = EmailMultiAlternatives(
+            subject=subject,
+            body=text_content,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[email],
+        )
+        email_msg.attach_alternative(html_content, "text/html")
+
+        result = email_msg.send()
+        if result:
+            logger.info(f"Verification email sent to {email}")
+            return True
+        else:
+            logger.error(f"Failed to send verification email to {email}")
+            return False
+    except Exception as e:
+        logger.error(f"Error sending verification email to {email}: {str(e)}")
+        return False
+
+
+def send_password_reset_email(email, code, expires_at=None):
+    """Send a 6-digit password reset code to `email`.
+
+    Returns True on success, False otherwise.
+    """
+    try:
+        subject = "Reset your VendorXprt password"
+        expires_at = expires_at or (timezone.now() + timedelta(minutes=15))
+
+        context = {
+            "code": code,
+            "email": email,
+            "site_name": "VendorXprt",
+            "expires_at": expires_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "support_email": settings.DEFAULT_FROM_EMAIL,
+        }
+
+        text_content = render_to_string("emails/password_reset.txt", context)
+        html_content = render_to_string("emails/password_reset.html", context)
+
+        email_msg = EmailMultiAlternatives(
+            subject=subject,
+            body=text_content,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[email],
+        )
+        email_msg.attach_alternative(html_content, "text/html")
+
+        result = email_msg.send()
+        if result:
+            logger.info(f"Password reset email sent to {email}")
+            return True
+        else:
+            logger.error(f"Failed to send password reset email to {email}")
+            return False
+    except Exception as e:
+        logger.error(f"Error sending password reset email to {email}: {str(e)}")
+        return False
+
+
 def send_vendor_welcome_email(vendor_profile_or_user):
     """
     Send a welcome email to newly registered vendors
@@ -82,7 +165,7 @@ def send_vendor_welcome_email(vendor_profile_or_user):
             # It's a UserProfile, get the VendorProfile
             user = vendor_profile_or_user
             vendor_profile = user.vendor_profile
-        subject = "🎊 Welcome to VendorXpert - Your Store is Ready!"
+        subject = "🎊 Welcome to VendorXprt - Your Store is Ready!"
 
         context = {
             "user_name": user.first_name or user.user_name,
@@ -90,7 +173,7 @@ def send_vendor_welcome_email(vendor_profile_or_user):
             or user.user_name,
             "store_name": vendor_profile.store_name,
             "email": user.email,
-            "site_name": "VendorXpert",
+            "site_name": "VendorXprt",
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
@@ -138,7 +221,7 @@ def send_receipt_email(order):
             logger.error(f"No user email found for order {order.ref}")
             return False
 
-        subject = f"🧾 Your VendorXpert Receipt - Order #{order.ref}"
+        subject = f"🧾 Your VendorXprt Receipt - Order #{order.ref}"
 
         # Calculate order totals and get items
         from store.models import OrderItem
@@ -184,7 +267,7 @@ def send_receipt_email(order):
             "vendors_list": list(vendors_involved),
             "customer_phone": order.phone,
             "customer_name": f"{order.first_name} {order.last_name}",
-            "site_name": "VendorXpert",
+            "site_name": "VendorXprt",
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 

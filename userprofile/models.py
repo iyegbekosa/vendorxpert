@@ -8,6 +8,8 @@ from django.contrib.auth.models import (
 )
 from phonenumber_field.modelfields import PhoneNumberField
 from datetime import timedelta
+from django.utils import timezone
+import uuid
 
 
 class CustomAccountManager(BaseUserManager):
@@ -89,6 +91,43 @@ class UserProfile(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.user_name
+
+
+class EmailVerification(models.Model):
+    """Store temporary verification codes for signup email verification and password resets.
+
+    For signup: Payload holds the pending user data (user_name, first_name, last_name and
+    a hashed password) until the code is verified and the user is created.
+
+    For password reset: Payload can be empty or hold additional context.
+    """
+
+    VERIFICATION_TYPES = (
+        ("signup", "Signup Verification"),
+        ("password_reset", "Password Reset"),
+    )
+
+    email = models.EmailField()
+    code = models.CharField(max_length=6)
+    verification_type = models.CharField(
+        max_length=20, choices=VERIFICATION_TYPES, default="signup"
+    )
+    payload = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ("-created_at",)
+        # Allow multiple verification records per email (for different types)
+        unique_together = [["email", "verification_type", "is_used"]]
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def mark_used(self):
+        self.is_used = True
+        self.save()
 
 
 class VendorPlan(models.Model):

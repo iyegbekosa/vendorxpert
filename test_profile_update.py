@@ -253,7 +253,7 @@ def show_usage_examples():
 
 
 if __name__ == "__main__":
-    print("🏥 VendorXpert Profile Management Test Suite")
+    print("🏥 VendorXprt Profile Management Test Suite")
     print("=" * 50)
 
     print("\n⚠️  Before running tests:")

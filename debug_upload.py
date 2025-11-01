@@ -174,7 +174,7 @@ Note: The -F flag automatically sets Content-Type to multipart/form-data
 
 
 if __name__ == "__main__":
-    print("🏥 VendorXpert Profile Picture Upload Debugger")
+    print("🏥 VendorXprt Profile Picture Upload Debugger")
     print("=" * 50)
 
     print("\n⚠️  Before running tests:")

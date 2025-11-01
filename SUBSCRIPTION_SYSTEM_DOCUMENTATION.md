@@ -1,8 +1,8 @@
-# 📚 VendorXpert Subscription System - Complete API Documentation
+# 📚 VendorXprt Subscription System - Complete API Documentation
 
 ## 🏗️ **Architecture Overview**
 
-The VendorXpert subscription system is a comprehensive SaaS billing solution built on Django REST Framework with Paystack integration. It supports trial periods, multiple subscription plans, payment failure handling, subscription management, and detailed analytics.
+The VendorXprt subscription system is a comprehensive SaaS billing solution built on Django REST Framework with Paystack integration. It supports trial periods, multiple subscription plans, payment failure handling, subscription management, and detailed analytics.
 
 ---
 
@@ -1082,4 +1082,4 @@ if vendor.plan:
 
 ---
 
-This documentation covers the complete VendorXpert subscription system. For additional technical details, refer to the source code in `userprofile/models.py`, `userprofile/api_views.py`, and `userprofile/serializers.py`.
+This documentation covers the complete VendorXprt subscription system. For additional technical details, refer to the source code in `userprofile/models.py`, `userprofile/api_views.py`, and `userprofile/serializers.py`.
