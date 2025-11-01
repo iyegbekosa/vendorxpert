@@ -766,21 +766,22 @@ def profile_api(request):
     method="post",
     operation_description="Upload or update user's profile picture. Accepts either 'picture' or 'profile_picture' field name.",
     operation_summary="Upload profile picture",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        properties={
-            "profile_picture": openapi.Schema(
-                type=openapi.TYPE_FILE,
-                description="Profile picture image file (max 5MB, JPG/PNG/GIF/SVG)",
-            ),
-            "picture": openapi.Schema(
-                type=openapi.TYPE_FILE,
-                description="Alternative field name for profile picture (same as profile_picture, max 5MB, JPG/PNG/GIF/SVG)",
-            ),
-        },
-        required=["profile_picture"],
-        description="Use either 'profile_picture' or 'picture' field name for the image file",
-    ),
+    manual_parameters=[
+        openapi.Parameter(
+            "profile_picture",
+            openapi.IN_FORM,
+            description="Profile picture image file (max 5MB, JPG/PNG/GIF/SVG)",
+            type=openapi.TYPE_FILE,
+            required=False,
+        ),
+        openapi.Parameter(
+            "picture",
+            openapi.IN_FORM,
+            description="Alternative field name for profile picture (same as profile_picture, max 5MB, JPG/PNG/GIF/SVG)",
+            type=openapi.TYPE_FILE,
+            required=False,
+        ),
+    ],
     responses={
         200: openapi.Response(
             description="Profile picture uploaded successfully",

@@ -111,7 +111,7 @@ def products_list_api(request):
     products = Product.objects.filter(
         status=Product.ACTIVE,
         stock=Product.IN_STOCK,
-        vendor__subscription_status__in=["active", "grace"],
+        vendor__subscription_status__in=["active", "grace", "trial"],
     )
 
     # Handle ordering
@@ -222,7 +222,7 @@ def category_detail_api(request, slug):
     products = category.product.filter(
         status=Product.ACTIVE,
         stock=Product.IN_STOCK,
-        vendor__subscription_status__in=["active", "grace"],
+        vendor__subscription_status__in=["active", "grace", "trial"],
     )
 
     paginator = StandardResultsPagination()
@@ -284,7 +284,7 @@ def search_api(request):
     products = Product.objects.filter(
         status=Product.ACTIVE,
         stock=Product.IN_STOCK,
-        vendor__subscription_status__in=["active", "grace"],
+        vendor__subscription_status__in=["active", "grace", "trial"],
     ).filter(Q(title__icontains=query) | Q(description__icontains=query))
 
     paginator = StandardResultsPagination()
