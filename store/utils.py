@@ -19,7 +19,7 @@ def create_paystack_subaccount(vendor, account_number, bank_code):
     response = requests.post(url, json=payload, headers=headers)
     data = response.json()
 
-    if response.status_code == 200 and data.get("status"):
+    if response.status_code == 201 and data.get("status"):
         vendor.subaccount_code = data["data"]["subaccount_code"]
         vendor.save()
         return vendor.subaccount_code
