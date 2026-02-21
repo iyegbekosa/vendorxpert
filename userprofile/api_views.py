@@ -261,49 +261,46 @@ def verify_signup_api(request):
 def resend_verification_api(request):
     """
     Resend verification code for email signup.
-    
+
     Generates a new 6-digit verification code and sends it to the user's email
     if there's a pending signup verification record.
     """
     email = request.data.get("email")
-    
+
     if not email:
         return Response(
-            {"error": "Email is required"}, 
-            status=status.HTTP_400_BAD_REQUEST
+            {"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     try:
         # Find existing pending verification for signup
         ev = EmailVerification.objects.get(
-            email=email, 
-            verification_type="signup", 
-            is_used=False
+            email=email, verification_type="signup", is_used=False
         )
     except EmailVerification.DoesNotExist:
         return Response(
-            {"error": "No pending verification found for this email."}, 
-            status=status.HTTP_400_BAD_REQUEST
+            {"error": "No pending verification found for this email."},
+            status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     # Generate new 6-digit code
     new_code = "".join(random.choices("0123456789", k=6))
-    
+
     # Update existing record with new code and extended expiration
-    ev.code = new_code  
+    ev.code = new_code
     ev.expires_at = timezone.now() + timedelta(minutes=15)
     ev.save()
-    
+
     # Send the new verification code
     try:
         send_verification_email(email, new_code, expires_at=ev.expires_at)
     except Exception as e:
         logger.error(f"Failed to resend verification email to {email}: {str(e)}")
         return Response(
-            {"error": "Failed to send verification email. Please try again later."}, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            {"error": "Failed to send verification email. Please try again later."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-    
+
     return Response(
         {
             "success": True,
