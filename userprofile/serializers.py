@@ -242,41 +242,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
         return account_number
 
-    def validate_bank_code(self, value):
-        """
-        Validate bank code format
-        """
-        # Common Nigerian bank codes
-        valid_bank_codes = {
-            "044": "Access Bank",
-            "063": "Access Bank (Diamond)",
-            "050": "Ecobank",
-            "070": "Fidelity Bank",
-            "011": "First Bank",
-            "214": "First City Monument Bank",
-            "058": "Guaranty Trust Bank",
-            "030": "Heritage Bank",
-            "301": "Jaiz Bank",
-            "082": "Keystone Bank",
-            "076": "Polaris Bank",
-            "101": "Providus Bank",
-            "221": "Stanbic IBTC Bank",
-            "068": "Standard Chartered",
-            "232": "Sterling Bank",
-            "100": "SunTrust Bank",
-            "032": "Union Bank",
-            "033": "United Bank for Africa",
-            "215": "Unity Bank",
-            "035": "Wema Bank",
-            "057": "Zenith Bank",
-        }
-
-        if value not in valid_bank_codes:
-            raise serializers.ValidationError(
-                f"Invalid bank code. Supported banks: {', '.join([f'{code} ({name})' for code, name in valid_bank_codes.items()])}"
-            )
-
-        return value
+    
 
     def validate_store_name(self, value):
         """
@@ -440,7 +406,9 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                     )
 
                 # Save uploaded file to ImageField
-                vendor.store_logo.save(name, file_logo, save=True)
+                # Use the field's save method correctly for CloudinaryField
+                vendor.store_logo = file_logo
+                vendor.save()
 
             elif store_logo_url:
                 try:
@@ -454,9 +422,12 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                         # Ensure filename has an extension
                         if not os.path.splitext(filename)[1]:
                             filename = f"{filename}.png"
+                        
+                        # Assign the file content to CloudinaryField
                         vendor.store_logo.save(
-                            filename, ContentFile(resp.content), save=True
+                            filename, ContentFile(resp.content), save=False
                         )
+                        vendor.save()
                     else:
                         print(
                             f"[userprofile] Failed to fetch store_logo from {store_logo_url}: HTTP {resp.status_code}"
