@@ -285,3 +285,10 @@ EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool)
 EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)
+
+# Email Connection Settings for better SMTP stability
+EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=30, cast=int)  # Connection timeout
+EMAIL_USE_LOCALTIME = config("EMAIL_USE_LOCALTIME", default=False, cast=bool)
+
+# Server Email (for error emails)
+SERVER_EMAIL = config("SERVER_EMAIL", default=EMAIL_HOST_USER)

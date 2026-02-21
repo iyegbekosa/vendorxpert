@@ -27,6 +27,7 @@ urlpatterns = [
 urlpatterns += [
     path("api/signup/", api_views.signup_api, name="signup_api"),
     path("api/verify-signup/", api_views.verify_signup_api, name="verify_signup_api"),
+    path("api/resend-verification/", api_views.resend_verification_api, name="resend_verification_api"),
     path(
         "api/forgot-password/",
         api_views.forgot_password_api,
