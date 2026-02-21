@@ -242,8 +242,6 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
         return account_number
 
-    
-
     def validate_store_name(self, value):
         """
         Validate store name
@@ -422,7 +420,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                         # Ensure filename has an extension
                         if not os.path.splitext(filename)[1]:
                             filename = f"{filename}.png"
-                        
+
                         # Assign the file content to CloudinaryField
                         vendor.store_logo.save(
                             filename, ContentFile(resp.content), save=False
