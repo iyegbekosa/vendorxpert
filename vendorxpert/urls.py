@@ -30,7 +30,7 @@ schema_view = get_schema_view(
         default_version="v1",
         description="API documentation for VendorXprt - A comprehensive vendor management and e-commerce platform",
         terms_of_service="https://www.google.com/policies/terms/",
-        contact=openapi.Contact(email="contact@vendorxpert.com"),
+        contact=openapi.Contact(email="contact@vendorxprt.com"),
         license=openapi.License(name="BSD License"),
     ),
     public=True,

@@ -190,6 +190,8 @@ class VendorProfile(models.Model):
     subscription_token = models.CharField(max_length=255, blank=True, null=True)
     pending_ref = models.CharField(max_length=50, blank=True, null=True)
     whatsapp_number = PhoneNumberField(unique=True, null=True, blank=True)
+    account_number = models.CharField(max_length=20, null=True, blank=True)
+    bank_code = models.CharField(max_length=10, null=True, blank=True)
     instagram_handle = models.CharField(max_length=50, blank=True)
     tiktok_handle = models.CharField(max_length=50, blank=True)
     is_verified = models.BooleanField(default=False)
