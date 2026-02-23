@@ -23,7 +23,7 @@ from store.utils import create_paystack_subaccount
 from django.db import transaction
 from django.db.models import Count, Q
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from store.models import OrderItem, Order, Payment, Review
 from .views import get_object_or_404
 from store.pagination import StandardResultsPagination
@@ -1052,7 +1052,7 @@ def remove_profile_picture_api(request):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-@parser_classes([MultiPartParser, FormParser])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 @transaction.atomic
 def register_vendor_api(request):
     """
