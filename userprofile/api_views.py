@@ -9,6 +9,7 @@ from .serializers import (
     ProfilePictureUploadSerializer,
     VendorRegisterSerializer,
     VendorProfileSerializer,
+    VendorUpdateSerializer,
     VendorListSerializer,
     Product,
     ProductSerializer,
@@ -1255,24 +1256,87 @@ def vendors_list_api(request):
     },
     tags=["Vendor Products"],
 )
-@api_view(["GET"])
+@swagger_auto_schema(
+    method="put",
+    operation_description="Update vendor store details like name, description, contact information",
+    security=[{"Bearer": []}],
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            "store_name": openapi.Schema(
+                type=openapi.TYPE_STRING, description="Store name"
+            ),
+            "store_description": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="Store description (max 500 chars)",
+            ),
+            "phone_number": openapi.Schema(
+                type=openapi.TYPE_STRING, description="Contact phone number"
+            ),
+            "whatsapp_number": openapi.Schema(
+                type=openapi.TYPE_STRING, description="WhatsApp number"
+            ),
+            "instagram_handle": openapi.Schema(
+                type=openapi.TYPE_STRING, description="Instagram handle"
+            ),
+            "tiktok_handle": openapi.Schema(
+                type=openapi.TYPE_STRING, description="TikTok handle"
+            ),
+        },
+    ),
+    responses={
+        200: openapi.Response(
+            description="Store details updated successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(type=openapi.TYPE_STRING),
+                    "store": openapi.Schema(
+                        type=openapi.TYPE_OBJECT, description="Updated store details"
+                    ),
+                },
+            ),
+        ),
+        400: openapi.Response(description="Invalid data provided"),
+        403: openapi.Response(description="User is not a vendor"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Vendor Products"],
+)
+@api_view(["GET", "PUT"])
 @permission_classes([IsAuthenticated, VendorFeatureAccess])
 def my_store_api(request):
     """
-    Get vendor's own store information.
+    Get or update vendor's own store information.
 
-    Returns comprehensive store details including:
+    GET: Returns comprehensive store details including:
     - Store information (name, description, logo, contact details)
     - Average rating and total reviews
     - Product count (active products only)
     - Subscription status
 
+    PUT: Updates vendor store details like name, description, contact info.
     Does NOT return individual products - use separate endpoint for product listing.
     """
     try:
         vendor_profile = request.user.vendor_profile
     except AttributeError:
         return Response({"error": "User is not a vendor."}, status=403)
+
+    if request.method == "PUT":
+        serializer = VendorUpdateSerializer(
+            vendor_profile, data=request.data, partial=True
+        )
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {
+                    "message": "Store details updated successfully",
+                    "store": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     # Get product count (excluding deleted products)
     product_count = (

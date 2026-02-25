@@ -477,6 +477,36 @@ class VendorProfileSerializer(serializers.ModelSerializer):
         return ProductSerializer(products, many=True).data
 
 
+class VendorUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating vendor store details"""
+
+    class Meta:
+        model = VendorProfile
+        fields = [
+            "store_name",
+            "store_description",
+            "store_logo",
+            "phone_number",
+            "whatsapp_number",
+            "instagram_handle",
+            "tiktok_handle",
+        ]
+
+    def validate_store_name(self, value):
+        """Ensure store name is not empty"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Store name cannot be empty.")
+        return value.strip()
+
+    def validate_store_description(self, value):
+        """Optional validation for store description"""
+        if value and len(value) > 500:
+            raise serializers.ValidationError(
+                "Store description cannot exceed 500 characters."
+            )
+        return value
+
+
 class ProductCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
