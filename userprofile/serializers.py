@@ -641,6 +641,43 @@ class SubscriptionResponseSerializer(serializers.Serializer):
     message = serializers.CharField(help_text="Success message")
 
 
+class ChangePlanSerializer(serializers.Serializer):
+    plan_id = serializers.IntegerField(help_text="ID of the new plan to switch to")
+    immediate = serializers.BooleanField(
+        default=False,
+        help_text="Whether to apply change immediately (true) or at next billing cycle (false)",
+    )
+
+    def validate_plan_id(self, value):
+        try:
+            plan = VendorPlan.objects.get(id=value, is_active=True)
+            return value
+        except VendorPlan.DoesNotExist:
+            raise serializers.ValidationError("Invalid or inactive plan selected.")
+
+    def validate(self, attrs):
+        """Additional validation for plan change"""
+        plan_id = attrs.get("plan_id")
+
+        # Get the vendor from context (should be passed from view)
+        vendor = self.context.get("vendor")
+        if not vendor:
+            raise serializers.ValidationError("Vendor context is required.")
+
+        # Check if trying to change to the same plan
+        current_plan = vendor.plan
+        if current_plan and current_plan.id == plan_id:
+            raise serializers.ValidationError("You are already on this plan.")
+
+        # Check subscription status
+        if vendor.subscription_status in ["cancelled", "expired"]:
+            raise serializers.ValidationError(
+                f"Cannot change plan when subscription is {vendor.subscription_status}. Please resubscribe first."
+            )
+
+        return attrs
+
+
 class SubscriptionHistorySerializer(serializers.ModelSerializer):
     """Serializer for subscription history events"""
 
