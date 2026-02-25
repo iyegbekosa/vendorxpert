@@ -8,51 +8,53 @@ django.setup()
 
 from userprofile.models import VendorPlan
 
-print("=== UPDATING VENDOR PLANS ===")
+print("=== UPDATING VENDOR PLANS TO NEW PRICING ===")
 
-# Update basic plan
+# Update basic plan to ₦3000
 try:
     basic_plan = VendorPlan.objects.get(name="basic")
-    basic_plan.max_products = 6
-    basic_plan.price = 2500  # ₦2500/month
+    basic_plan.max_products = 10  # Increased from 6
+    basic_plan.price = 3000  # ₦3000/month (increased from ₦2500)
     basic_plan.save()
-    print("✓ Updated basic plan: ₦2500/month, max_products = 6")
+    print("✓ Updated basic plan: ₦3000/month, max_products = 10")
 except VendorPlan.DoesNotExist:
     print("✗ Basic plan not found")
 
-# Create/Update Pro plan
+# Create/Update Pro plan to ₦5000
 pro_plan, created = VendorPlan.objects.get_or_create(
     name="pro",
     defaults={
-        "price": 3500,  # ₦3500/month
-        "max_products": 15,
+        "price": 5000,  # ₦5000/month (increased from ₦3500)
+        "max_products": 20,  # Increased from 15
         "paystack_plan_code": "",  # You'll need to set this after creating the plan in Paystack
     },
 )
 if created:
-    print("✓ Created Pro plan: ₦3500/month, max_products = 15")
+    print("✓ Created Pro plan: ₦5000/month, max_products = 20")
 else:
     # Update existing pro plan price
-    pro_plan.price = 3500
+    pro_plan.price = 5000
+    pro_plan.max_products = 20
     pro_plan.save()
-    print("✓ Updated Pro plan: ₦3500/month, max_products = 15")
+    print("✓ Updated Pro plan: ₦5000/month, max_products = 20")
 
-# Create/Update Premium plan
+# Create/Update Premium plan to ₦10000 with 25 products max
 premium_plan, created = VendorPlan.objects.get_or_create(
     name="premium",
     defaults={
-        "price": 5000,  # ₦5000/month
-        "max_products": 50,
+        "price": 10000,  # ₦10000/month (increased from ₦5000)
+        "max_products": 25,  # Reduced from 50 to 25
         "paystack_plan_code": "",  # You'll need to set this after creating the plan in Paystack
     },
 )
 if created:
-    print("✓ Created Premium plan: ₦5000/month, max_products = 50")
+    print("✓ Created Premium plan: ₦10000/month, max_products = 25")
 else:
     # Update existing premium plan price
-    premium_plan.price = 5000
+    premium_plan.price = 10000
+    premium_plan.max_products = 25
     premium_plan.save()
-    print("✓ Updated Premium plan: ₦5000/month, max_products = 50")
+    print("✓ Updated Premium plan: ₦10000/month, max_products = 25")
 
 print("\n=== CURRENT VENDOR PLANS ===")
 plans = VendorPlan.objects.all().order_by("price")
