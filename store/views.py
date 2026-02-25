@@ -328,9 +328,17 @@ def paystack_callback(request):
         return HttpResponse("Failed to verify payment", status=400)
 
     payment_data = data["data"]
+    metadata = payment_data.get("metadata", {})
 
-    # Locate payment record
-    payment = get_object_or_404(Payment, ref=ref)
+    # Check if this is a subscription plan change payment
+    if metadata.get("type") == "plan_change":
+        return handle_subscription_plan_change_callback(ref, payment_data, metadata)
+
+    # Locate payment record for regular store payments
+    try:
+        payment = Payment.objects.get(ref=ref)
+    except Payment.DoesNotExist:
+        return HttpResponse("Payment record not found", status=404)
 
     if payment.status == "paid":
         return redirect("receipt")
@@ -370,6 +378,92 @@ def paystack_callback(request):
         payment.status = "failed"
         payment.save()
         return HttpResponse("Payment failed or was not successful", status=400)
+
+
+def handle_subscription_plan_change_callback(ref, payment_data, metadata):
+    """Handle successful payment callback for subscription plan changes"""
+    from userprofile.models import VendorProfile, VendorPlan, SubscriptionHistory
+    from django.utils import timezone
+    from datetime import timedelta
+    
+    print(f"🎯 [Store Callback] Handling plan change payment: {ref}")
+    
+    try:
+        vendor = VendorProfile.objects.get(pending_ref=ref)
+    except VendorProfile.DoesNotExist:
+        print(f"❌ [Store Callback] No vendor with pending ref: {ref}")
+        return HttpResponse("Vendor not found for payment reference", status=404)
+
+    if payment_data.get("status") != "success":
+        print(f"❌ [Store Callback] Payment failed for ref: {ref}")
+        vendor.pending_ref = None
+        vendor.save()
+        return HttpResponse("Payment was not successful", status=400)
+
+    amount = payment_data.get("amount", 0) / 100  # Convert from kobo to naira
+    
+    try:
+        # Get plan details from metadata
+        new_plan_id = metadata.get("new_plan_id")
+        old_plan_id = metadata.get("old_plan_id") 
+        is_trial_upgrade = metadata.get("is_trial_upgrade", False)
+        
+        if not new_plan_id:
+            print(f"❌ [Store Callback] Missing new_plan_id in metadata")
+            return HttpResponse("Invalid payment metadata", status=400)
+            
+        new_plan = VendorPlan.objects.get(id=new_plan_id, is_active=True)
+        old_plan = VendorPlan.objects.get(id=old_plan_id) if old_plan_id else None
+        
+        print(f"📝 [Store Callback] Updating vendor plan: {old_plan.name if old_plan else 'None'} → {new_plan.name}")
+        
+        # Update vendor plan
+        vendor.plan = new_plan
+        vendor.pending_ref = None
+        vendor.last_payment_date = timezone.now()
+        vendor.failed_payment_count = 0
+        
+        # Special handling for trial-to-paid conversions
+        if vendor.subscription_status == "trial" or is_trial_upgrade:
+            print(f"🎯 [Store Callback] Converting trial user to active subscription")
+            vendor.subscription_status = "active"
+            vendor.subscription_expiry = timezone.now() + timedelta(days=30)
+            vendor.trial_start = None
+            vendor.trial_end = None
+            
+        vendor.save()
+        
+        # Log the successful plan change
+        is_upgrade = new_plan.price > (old_plan.price if old_plan else 0)
+        event_type = "plan_upgraded" if is_upgrade else "plan_downgraded"
+        
+        notes = f"Plan change completed from {old_plan.name if old_plan else 'None'} to {new_plan.name}. "
+        if is_trial_upgrade:
+            notes += f"Trial converted to paid subscription. "
+        notes += f"Amount paid: ₦{amount}"
+        
+        SubscriptionHistory.log_event(
+            vendor=vendor,
+            event_type=event_type,
+            previous_status="trial" if is_trial_upgrade else "active",
+            new_status="active",
+            amount=amount,
+            payment_reference=ref,
+            paystack_response=payment_data,
+            notes=notes,
+        )
+        
+        print(f"✅ [Store Callback] Plan change successful for vendor {vendor.id}: {notes}")
+        
+        # Redirect to a success page (you can customize this)
+        return redirect("/my_store")  # Or wherever you want users to go after payment
+        
+    except VendorPlan.DoesNotExist:
+        print(f"❌ [Store Callback] Invalid plan in metadata")
+        return HttpResponse("Invalid subscription plan", status=400)
+    except Exception as e:
+        print(f"❌ [Store Callback] Error processing plan change: {str(e)}")
+        return HttpResponse(f"Error processing plan change: {str(e)}", status=500)
 
 
 @csrf_exempt

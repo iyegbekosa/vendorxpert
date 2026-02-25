@@ -322,18 +322,22 @@ class VendorProfile(models.Model):
         from django.urls import reverse
         import uuid
         import requests
-        
+
         print(f"🔧 [Model] Starting change_plan_with_payment for vendor {self.id}")
 
         if not new_plan or new_plan == self.plan:
-            print(f"❌ [Model] Invalid plan change: new_plan={new_plan}, current_plan={self.plan}")
+            print(
+                f"❌ [Model] Invalid plan change: new_plan={new_plan}, current_plan={self.plan}"
+            )
             return {"success": False, "error": "Invalid plan or already on this plan."}
 
         old_plan = self.plan
         is_upgrade = new_plan.price > (old_plan.price if old_plan else 0)
-        
+
         print(f"📊 [Model] Plan change details:")
-        print(f"  - Old plan: {old_plan.name if old_plan else 'None'} (₦{old_plan.price if old_plan else 0})")
+        print(
+            f"  - Old plan: {old_plan.name if old_plan else 'None'} (₦{old_plan.price if old_plan else 0})"
+        )
         print(f"  - New plan: {new_plan.name} (₦{new_plan.price})")
         print(f"  - Is upgrade: {is_upgrade}")
         print(f"  - Immediate: {immediate}")
@@ -342,16 +346,24 @@ class VendorProfile(models.Model):
         prorated_amount = 0
         requires_payment = False
 
-        # Special case: Trial users upgrading to paid plans must pay immediately
-        if self.subscription_status == "trial" and new_plan.price > 0:
-            print(f"🚨 [Model] Trial user upgrading to paid plan - Immediate payment required")
+        # Special case: Trial users upgrading to MORE expensive paid plans must pay immediately
+        if self.subscription_status == "trial" and is_upgrade and new_plan.price > 0:
+            print(
+                f"🚨 [Model] Trial user upgrading to paid plan - Immediate payment required"
+            )
             prorated_amount = new_plan.price  # Full monthly amount, not prorated
             requires_payment = True
-            print(f"💳 [Model] Trial upgrade payment: ₦{prorated_amount} (full monthly fee)")
+            print(
+                f"💳 [Model] Trial upgrade payment: ₦{prorated_amount} (full monthly fee)"
+            )
+        elif self.subscription_status == "trial" and not is_upgrade:
+            print(f"🔽 [Model] Trial user downgrade - No payment required")
+            prorated_amount = 0
+            requires_payment = False
         elif self.subscription_expiry and not immediate:
             days_remaining = self.get_subscription_days_remaining()
             print(f"⏰ [Model] Days remaining in subscription: {days_remaining}")
-            
+
             if days_remaining > 0:
                 daily_old_rate = (old_plan.price if old_plan else 0) / 30
                 daily_new_rate = new_plan.price / 30
@@ -366,7 +378,9 @@ class VendorProfile(models.Model):
                 requires_payment = is_upgrade and prorated_amount > 0
                 print(f"💳 [Model] Requires payment: {requires_payment}")
         else:
-            print(f"🔄 [Model] Immediate change or no subscription expiry - No proration")
+            print(
+                f"🔄 [Model] Immediate change or no subscription expiry - No proration"
+            )
 
         # If payment is required, process it through Paystack
         if requires_payment and request:
@@ -422,9 +436,11 @@ class VendorProfile(models.Model):
 
                 response_data = response.json()
                 print(f"📊 [Model] Paystack response data: {response_data}")
-                
+
                 if not response_data.get("status"):
-                    error_msg = response_data.get("message", "Payment initialization failed")
+                    error_msg = response_data.get(
+                        "message", "Payment initialization failed"
+                    )
                     print(f"❌ [Model] Paystack returned error: {error_msg}")
                     raise Exception(error_msg)
 
@@ -446,7 +462,9 @@ class VendorProfile(models.Model):
                 )
 
                 auth_url = response_data["data"]["authorization_url"]
-                print(f"✅ [Model] Payment URL generated successfully: {auth_url[:50]}...")
+                print(
+                    f"✅ [Model] Payment URL generated successfully: {auth_url[:50]}..."
+                )
 
                 return {
                     "success": True,
@@ -471,10 +489,12 @@ class VendorProfile(models.Model):
         # If no payment required, process the change immediately
         else:
             print("🔄 [Model] Processing immediate plan change (no payment required)")
-            
+
             # Update Paystack subscription if vendor has one
             if self.paystack_subscription_code and new_plan.paystack_plan_code:
-                print(f"🔗 [Model] Updating Paystack subscription: {self.paystack_subscription_code}")
+                print(
+                    f"🔗 [Model] Updating Paystack subscription: {self.paystack_subscription_code}"
+                )
                 try:
                     self._update_paystack_subscription(new_plan)
                     print("✅ [Model] Paystack subscription updated successfully")
@@ -484,10 +504,14 @@ class VendorProfile(models.Model):
                         f"⚠️ [Model] Failed to update Paystack subscription for vendor {self.id}: {str(e)}"
                     )
             else:
-                print("🔗 [Model] Skipping Paystack subscription update (no subscription code or plan code)")
+                print(
+                    "🔗 [Model] Skipping Paystack subscription update (no subscription code or plan code)"
+                )
 
             # Update plan locally
-            print(f"💾 [Model] Updating local plan from {self.plan.name if self.plan else 'None'} to {new_plan.name}")
+            print(
+                f"💾 [Model] Updating local plan from {self.plan.name if self.plan else 'None'} to {new_plan.name}"
+            )
             self.plan = new_plan
             self.save()
 
@@ -511,7 +535,7 @@ class VendorProfile(models.Model):
                 "new_plan": new_plan.name,
                 "payment_status": "completed",
             }
-            
+
             print(f"✅ [Model] Plan change completed successfully: {result}")
             return result
 
@@ -519,7 +543,7 @@ class VendorProfile(models.Model):
         """Update Paystack subscription to new plan"""
         from django.conf import settings
         import requests
-        
+
         print(f"🔗 [Model] Starting Paystack subscription update")
         print(f"  - Subscription code: {self.paystack_subscription_code}")
         print(f"  - New plan code: {new_plan.paystack_plan_code}")
@@ -536,7 +560,7 @@ class VendorProfile(models.Model):
         payload = {
             "plan": new_plan.paystack_plan_code,
         }
-        
+
         print(f"📦 [Model] Paystack subscription update payload: {payload}")
         print(f"🚀 [Model] Sending PUT request to Paystack subscription API")
 
@@ -547,12 +571,14 @@ class VendorProfile(models.Model):
             timeout=30,
         )
 
-        print(f"📡 [Model] Paystack subscription update response: {response.status_code}")
+        print(
+            f"📡 [Model] Paystack subscription update response: {response.status_code}"
+        )
 
         if response.status_code != 200:
             print(f"❌ [Model] Paystack subscription update failed: {response.text}")
             raise Exception(f"Failed to update Paystack subscription: {response.text}")
-        
+
         print("✅ [Model] Paystack subscription updated successfully")
 
     def extend_subscription(self, days=30):
