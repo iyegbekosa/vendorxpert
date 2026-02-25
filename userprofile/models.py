@@ -139,12 +139,16 @@ class EmailVerification(models.Model):
 
 
 class VendorPlan(models.Model):
+    FREE = "free"
     BASIC = "basic"
+    PRO = "pro"
     PREMIUM = "premium"
     EXTERNAL = "external"
 
     PLAN_CHOICES = [
+        (FREE, "Free"),
         (BASIC, "Basic"),
+        (PRO, "Pro"),
         (PREMIUM, "Premium"),
         (EXTERNAL, "External"),
     ]
@@ -154,6 +158,9 @@ class VendorPlan(models.Model):
     price = models.IntegerField(help_text="Monthly price in NGN")
     max_products = models.IntegerField(
         null=True, blank=True, help_text="Max number of products allowed"
+    )
+    features = models.TextField(
+        blank=True, help_text="List of plan features (one per line)"
     )
     paystack_plan_code = models.CharField(
         max_length=100, blank=True, help_text="Paystack plan code if integrated"
