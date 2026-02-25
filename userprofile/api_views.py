@@ -17,6 +17,7 @@ from .serializers import (
     VendorOrderItemSerializer,
     VendorPlanSerializer,
     SubscriptionInitiateSerializer,
+    ChangePlanSerializer,
 )
 from .models import VendorProfile, VendorPlan
 from store.utils import create_paystack_subaccount
@@ -2784,32 +2785,65 @@ def resume_subscription_api(request):
 @transaction.atomic
 def change_plan_api(request):
     """Change subscription plan with prorated billing and payment processing"""
+
+    print(f"🔄 Change plan request initiated by user: {request.user.id}")
+    print(f"📊 Request data: {request.data}")
+
     try:
         vendor = request.user.vendor_profile
+        print(f"🏪 Vendor found: {vendor.id} - {vendor.store_name}")
+        print(f"📋 Current vendor plan: {vendor.plan.name if vendor.plan else 'None'}")
+        print(f"🔔 Current subscription status: {vendor.subscription_status}")
     except VendorProfile.DoesNotExist:
+        print(f"❌ User {request.user.id} is not a vendor")
         return Response({"error": "User is not a vendor."}, status=403)
 
     # Use serializer for validation
+    print("🔍 Starting request validation with ChangePlanSerializer")
     serializer = ChangePlanSerializer(data=request.data, context={"vendor": vendor})
     if not serializer.is_valid():
+        print(f"❌ Validation failed: {serializer.errors}")
         return Response(serializer.errors, status=400)
 
     validated_data = serializer.validated_data
     plan_id = validated_data["plan_id"]
     immediate = validated_data["immediate"]
 
+    print(f"✅ Validation passed - Plan ID: {plan_id}, Immediate: {immediate}")
+
     try:
         new_plan = VendorPlan.objects.get(id=plan_id, is_active=True)
+        print(f"🎯 Target plan found: {new_plan.name} (₦{new_plan.price}/month)")
     except VendorPlan.DoesNotExist:
+        print(f"❌ Plan not found or inactive: {plan_id}")
         return Response({"error": "Plan not found or inactive."}, status=404)
+
+    # Log plan change attempt details
+    old_plan_name = vendor.plan.name if vendor.plan else "None"
+    print(f"🔄 Attempting plan change: {old_plan_name} → {new_plan.name}")
+
+    if vendor.subscription_expiry:
+        days_remaining = vendor.get_subscription_days_remaining()
+        print(f"📅 Subscription expiry: {vendor.subscription_expiry}")
+        print(f"⏰ Days remaining: {days_remaining}")
+    else:
+        print("📅 No subscription expiry set")
 
     # Use transaction for atomic operation
     try:
+        print("💳 Calling change_plan_with_payment method")
         result = vendor.change_plan_with_payment(
             new_plan, immediate=immediate, request=request
         )
 
+        print(f"💰 Change plan result: {result}")
+
         if result and result.get("success"):
+            print("✅ Plan change successful!")
+            print(f"💵 Prorated amount: ₦{result.get('prorated_amount', 0)}")
+            print(f"📈 Is upgrade: {result.get('is_upgrade', False)}")
+            print(f"🔄 Payment status: {result.get('payment_status', 'completed')}")
+
             response_data = {
                 "message": f"Plan {'upgraded' if result['is_upgrade'] else 'downgraded'} successfully.",
                 "old_plan": result["old_plan"],
@@ -2823,7 +2857,11 @@ def change_plan_api(request):
             if result.get("authorization_url"):
                 response_data["authorization_url"] = result["authorization_url"]
                 response_data["payment_status"] = "payment_required"
+                print(
+                    f"💳 Payment required - Authorization URL generated: {result['authorization_url'][:50]}..."
+                )
 
+            print(f"📤 Sending successful response: {response_data}")
             return Response(response_data, status=200)
         else:
             error_message = (
@@ -2831,13 +2869,17 @@ def change_plan_api(request):
                 if result
                 else "Failed to change plan."
             )
+            print(f"❌ Plan change failed: {error_message}")
             return Response({"error": error_message}, status=400)
 
     except PaymentProcessingError as e:
-        logger.error(f"Payment processing error during plan change: {str(e)}")
+        print(f"💳❌ Payment processing error during plan change: {str(e)}")
         return Response({"error": f"Payment processing failed: {str(e)}"}, status=502)
     except Exception as e:
-        logger.error(f"Unexpected error during plan change: {str(e)}")
+        print(f"🚨 Unexpected error during plan change: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
         return Response(
             {"error": "An unexpected error occurred. Please try again."}, status=500
         )
@@ -2999,17 +3041,18 @@ def handle_successful_payment(data):
 def handle_plan_change_payment(vendor, data, metadata, amount, reference):
     """Handle successful payment for plan changes"""
     from .models import SubscriptionHistory, VendorPlan
+    from django.utils import timezone
+    from datetime import timedelta
 
     try:
         # Get plan details from metadata
         new_plan_id = metadata.get("new_plan_id")
         old_plan_id = metadata.get("old_plan_id")
         prorated_amount = metadata.get("prorated_amount", 0)
+        is_trial_upgrade = metadata.get("is_trial_upgrade", False)
 
         if not new_plan_id:
-            logger.error(
-                f"Missing new_plan_id in plan change payment metadata: {metadata}"
-            )
+            print(f"❌ Missing new_plan_id in plan change payment metadata: {metadata}")
             return HttpResponse(status=400)
 
         new_plan = VendorPlan.objects.get(id=new_plan_id, is_active=True)
@@ -3022,13 +3065,23 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
         vendor.last_payment_date = timezone.now()
         vendor.failed_payment_count = 0
 
+        # Special handling for trial-to-paid conversions
+        if vendor.subscription_status == "trial" or is_trial_upgrade:
+            print(f"🎯 [Webhook] Converting trial user to active paid subscription")
+            vendor.subscription_status = "active"
+            vendor.subscription_expiry = timezone.now() + timedelta(days=30)
+            vendor.trial_start = None
+            vendor.trial_end = None
+            print(f"📅 [Webhook] New subscription expiry: {vendor.subscription_expiry}")
+
         # Update Paystack subscription if vendor has one
         if vendor.paystack_subscription_code and new_plan.paystack_plan_code:
             try:
                 vendor._update_paystack_subscription(new_plan)
+                print("✅ [Webhook] Paystack subscription updated successfully")
             except Exception as e:
-                logger.warning(
-                    f"Failed to update Paystack subscription for vendor {vendor.id}: {str(e)}"
+                print(
+                    f"⚠️ [Webhook] Failed to update Paystack subscription for vendor {vendor.id}: {str(e)}"
                 )
 
         vendor.save()
@@ -3036,6 +3089,11 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
         # Log the successful plan change
         is_upgrade = new_plan.price > (old_plan.price if old_plan else 0)
         event_type = "plan_upgraded" if is_upgrade else "plan_downgraded"
+
+        notes = f"Plan change completed from {old_plan.name if old_plan else 'None'} to {new_plan.name}. "
+        if is_trial_upgrade:
+            notes += f"Trial converted to paid subscription. "
+        notes += f"Amount paid: ₦{amount}"
 
         SubscriptionHistory.log_event(
             vendor=vendor,
@@ -3045,23 +3103,21 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
             amount=amount,
             payment_reference=reference,
             paystack_response=data,
-            notes=f"Plan change completed from {old_plan.name if old_plan else 'None'} to {new_plan.name}. Prorated amount: ₦{prorated_amount}",
+            notes=notes,
         )
 
-        logger.info(
-            f"Plan change payment successful for vendor: {vendor.id} | "
+        print(
+            f"✅ Plan change payment successful for vendor: {vendor.id} | "
             f"Changed from {old_plan.name if old_plan else 'None'} to {new_plan.name} | "
-            f"Prorated amount: ₦{amount}"
+            f"Amount: ₦{amount} | Trial upgrade: {is_trial_upgrade}"
         )
         return HttpResponse(status=200)
 
     except VendorPlan.DoesNotExist:
-        logger.error(
-            f"Plan not found during plan change payment processing: {metadata}"
-        )
+        print(f"❌ Plan not found during plan change payment processing: {metadata}")
         return HttpResponse(status=404)
     except Exception as e:
-        logger.error(f"Error processing plan change payment: {str(e)}")
+        print(f"🚨 Error processing plan change payment: {str(e)}")
         return HttpResponse(status=500)
 
 

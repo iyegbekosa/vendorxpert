@@ -675,6 +675,17 @@ class ChangePlanSerializer(serializers.Serializer):
                 f"Cannot change plan when subscription is {vendor.subscription_status}. Please resubscribe first."
             )
 
+        # Get the new plan to check pricing
+        try:
+            new_plan = VendorPlan.objects.get(id=plan_id, is_active=True)
+        except VendorPlan.DoesNotExist:
+            raise serializers.ValidationError("Invalid or inactive plan selected.")
+
+        # Inform about trial upgrade payment requirement (allow but inform)
+        if vendor.subscription_status == "trial" and new_plan.price > 0:
+            # This is informational - we allow the upgrade but user should know payment is required
+            pass  # The API response will include payment URL
+
         return attrs
 
 
