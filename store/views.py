@@ -385,9 +385,9 @@ def handle_subscription_plan_change_callback(ref, payment_data, metadata):
     from userprofile.models import VendorProfile, VendorPlan, SubscriptionHistory
     from django.utils import timezone
     from datetime import timedelta
-    
+
     print(f"🎯 [Store Callback] Handling plan change payment: {ref}")
-    
+
     try:
         vendor = VendorProfile.objects.get(pending_ref=ref)
     except VendorProfile.DoesNotExist:
@@ -401,28 +401,30 @@ def handle_subscription_plan_change_callback(ref, payment_data, metadata):
         return HttpResponse("Payment was not successful", status=400)
 
     amount = payment_data.get("amount", 0) / 100  # Convert from kobo to naira
-    
+
     try:
         # Get plan details from metadata
         new_plan_id = metadata.get("new_plan_id")
-        old_plan_id = metadata.get("old_plan_id") 
+        old_plan_id = metadata.get("old_plan_id")
         is_trial_upgrade = metadata.get("is_trial_upgrade", False)
-        
+
         if not new_plan_id:
             print(f"❌ [Store Callback] Missing new_plan_id in metadata")
             return HttpResponse("Invalid payment metadata", status=400)
-            
+
         new_plan = VendorPlan.objects.get(id=new_plan_id, is_active=True)
         old_plan = VendorPlan.objects.get(id=old_plan_id) if old_plan_id else None
-        
-        print(f"📝 [Store Callback] Updating vendor plan: {old_plan.name if old_plan else 'None'} → {new_plan.name}")
-        
+
+        print(
+            f"📝 [Store Callback] Updating vendor plan: {old_plan.name if old_plan else 'None'} → {new_plan.name}"
+        )
+
         # Update vendor plan
         vendor.plan = new_plan
         vendor.pending_ref = None
         vendor.last_payment_date = timezone.now()
         vendor.failed_payment_count = 0
-        
+
         # Special handling for trial-to-paid conversions
         if vendor.subscription_status == "trial" or is_trial_upgrade:
             print(f"🎯 [Store Callback] Converting trial user to active subscription")
@@ -430,18 +432,18 @@ def handle_subscription_plan_change_callback(ref, payment_data, metadata):
             vendor.subscription_expiry = timezone.now() + timedelta(days=30)
             vendor.trial_start = None
             vendor.trial_end = None
-            
+
         vendor.save()
-        
+
         # Log the successful plan change
         is_upgrade = new_plan.price > (old_plan.price if old_plan else 0)
         event_type = "plan_upgraded" if is_upgrade else "plan_downgraded"
-        
+
         notes = f"Plan change completed from {old_plan.name if old_plan else 'None'} to {new_plan.name}. "
         if is_trial_upgrade:
             notes += f"Trial converted to paid subscription. "
         notes += f"Amount paid: ₦{amount}"
-        
+
         SubscriptionHistory.log_event(
             vendor=vendor,
             event_type=event_type,
@@ -452,12 +454,14 @@ def handle_subscription_plan_change_callback(ref, payment_data, metadata):
             paystack_response=payment_data,
             notes=notes,
         )
-        
-        print(f"✅ [Store Callback] Plan change successful for vendor {vendor.id}: {notes}")
-        
+
+        print(
+            f"✅ [Store Callback] Plan change successful for vendor {vendor.id}: {notes}"
+        )
+
         # Redirect to a success page (you can customize this)
         return redirect("/my_store")  # Or wherever you want users to go after payment
-        
+
     except VendorPlan.DoesNotExist:
         print(f"❌ [Store Callback] Invalid plan in metadata")
         return HttpResponse("Invalid subscription plan", status=400)
