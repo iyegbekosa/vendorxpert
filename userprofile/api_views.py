@@ -1644,7 +1644,7 @@ def my_subscription_status_api(request):
         openapi.Parameter(
             "price",
             openapi.IN_FORM,
-            description="Product price in kobo/cents (e.g., 1000 = ₦10.00)",
+            description="Product price in kobo/cents (e.g., 1000 = NGN 10.00)",
             type=openapi.TYPE_INTEGER,
             required=True,
         ),
@@ -1740,7 +1740,7 @@ def add_product_api(request):
         openapi.Parameter(
             "price",
             openapi.IN_FORM,
-            description="Product price in kobo/cents (e.g., 1000 = ₦10.00)",
+            description="Product price in kobo/cents (e.g., 1000 = NGN 10.00)",
             type=openapi.TYPE_INTEGER,
             required=False,
         ),
@@ -2940,7 +2940,7 @@ def change_plan_api(request):
 
     try:
         new_plan = VendorPlan.objects.get(id=plan_id, is_active=True)
-        print(f"[PLAN] Target plan found: {new_plan.name} (₦{new_plan.price}/month)")
+        print(f"[PLAN] Target plan found: {new_plan.name} (NGN {new_plan.price}/month)")
     except VendorPlan.DoesNotExist:
         print(f"[ERROR] Plan not found or inactive: {plan_id}")
         return Response({"error": "Plan not found or inactive."}, status=404)
@@ -2967,7 +2967,7 @@ def change_plan_api(request):
 
         if result and result.get("success"):
             print("[SUCCESS] Plan change successful!")
-            print(f"[PAYMENT] Prorated amount: ₦{result.get('prorated_amount', 0)}")
+            print(f"[PAYMENT] Prorated amount: NGN {result.get('prorated_amount', 0)}")
             print(f"[PLAN] Is upgrade: {result.get('is_upgrade', False)}")
             print(
                 f"[PAYMENT] Payment status: {result.get('payment_status', 'completed')}"
@@ -3162,7 +3162,7 @@ def handle_successful_payment(data):
     )
 
     logger.info(
-        f"Payment successful for vendor: {vendor.id} | Amount: ₦{amount} | New expiry: {vendor.subscription_expiry}"
+        f"Payment successful for vendor: {vendor.id} | Amount: NGN {amount} | New expiry: {vendor.subscription_expiry}"
     )
     return HttpResponse(status=200)
 
@@ -3198,21 +3198,21 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
 
         # Special handling for trial-to-paid conversions
         if vendor.subscription_status == "trial" or is_trial_upgrade:
-            print(f"🎯 [Webhook] Converting trial user to active paid subscription")
+            print(f"[WEBHOOK] Converting trial user to active paid subscription")
             vendor.subscription_status = "active"
             vendor.subscription_expiry = timezone.now() + timedelta(days=30)
             vendor.trial_start = None
             vendor.trial_end = None
-            print(f"📅 [Webhook] New subscription expiry: {vendor.subscription_expiry}")
+            print(f"[WEBHOOK] New subscription expiry: {vendor.subscription_expiry}")
 
         # Update Paystack subscription if vendor has one
         if vendor.paystack_subscription_code and new_plan.paystack_plan_code:
             try:
                 vendor._update_paystack_subscription(new_plan)
-                print("✅ [Webhook] Paystack subscription updated successfully")
+                print("[SUCCESS] [Webhook] Paystack subscription updated successfully")
             except Exception as e:
                 print(
-                    f"⚠️ [Webhook] Failed to update Paystack subscription for vendor {vendor.id}: {str(e)}"
+                    f"[WARNING] [Webhook] Failed to update Paystack subscription for vendor {vendor.id}: {str(e)}"
                 )
 
         vendor.save()
@@ -3224,7 +3224,7 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
         notes = f"Plan change completed from {old_plan.name if old_plan else 'None'} to {new_plan.name}. "
         if is_trial_upgrade:
             notes += f"Trial converted to paid subscription. "
-        notes += f"Amount paid: ₦{amount}"
+        notes += f"Amount paid: NGN {amount}"
 
         SubscriptionHistory.log_event(
             vendor=vendor,
@@ -3238,17 +3238,17 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
         )
 
         print(
-            f"✅ Plan change payment successful for vendor: {vendor.id} | "
+            f"[SUCCESS] Plan change payment successful for vendor: {vendor.id} | "
             f"Changed from {old_plan.name if old_plan else 'None'} to {new_plan.name} | "
-            f"Amount: ₦{amount} | Trial upgrade: {is_trial_upgrade}"
+            f"Amount: NGN {amount} | Trial upgrade: {is_trial_upgrade}"
         )
         return HttpResponse(status=200)
 
     except VendorPlan.DoesNotExist:
-        print(f"❌ Plan not found during plan change payment processing: {metadata}")
+        print(f"[ERROR] Plan not found during plan change payment processing: {metadata}")
         return HttpResponse(status=404)
     except Exception as e:
-        print(f"🚨 Error processing plan change payment: {str(e)}")
+        print(f"[ERROR] Error processing plan change payment: {str(e)}")
         return HttpResponse(status=500)
 
 
@@ -3305,7 +3305,7 @@ def handle_failed_payment(data):
     )
 
     logger.warning(
-        f"Payment failed for vendor: {vendor.id} | Amount: ₦{amount} | Attempt: {vendor.failed_payment_count} | Reason: {failure_reason}"
+        f"Payment failed for vendor: {vendor.id} | Amount: NGN {amount} | Attempt: {vendor.failed_payment_count} | Reason: {failure_reason}"
     )
     return HttpResponse(status=200)
 
@@ -3343,7 +3343,7 @@ def handle_plan_change_payment_failure(
         logger.warning(
             f"Plan change payment failed for vendor: {vendor.id} | "
             f"Attempted change from {old_plan.name if old_plan else 'None'} to {new_plan.name if new_plan else 'Unknown'} | "
-            f"Amount: ₦{amount} | Reason: {failure_reason}"
+            f"Amount: NGN {amount} | Reason: {failure_reason}"
         )
         return HttpResponse(status=200)
 
