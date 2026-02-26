@@ -1563,16 +1563,8 @@ def my_subscription_status_api(request):
     is_active = vendor.is_subscription_active()
 
     # Calculate days remaining
-    days_remaining = 0
-    in_grace_period = False
-    if vendor.subscription_expiry:
-        time_diff = vendor.subscription_expiry - now
-        days_remaining = time_diff.days
-
-        # Check if in grace period (expired but within 7 days)
-        if days_remaining < 0:
-            grace_period_end = vendor.subscription_expiry + timedelta(days=7)
-            in_grace_period = now <= grace_period_end
+    days_remaining = vendor.get_subscription_days_remaining()
+    in_grace_period = vendor.is_in_grace_period()
 
     # Plan information
     plan_info = None
