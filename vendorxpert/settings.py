@@ -292,3 +292,7 @@ EMAIL_USE_LOCALTIME = config("EMAIL_USE_LOCALTIME", default=False, cast=bool)
 
 # Server Email (for error emails)
 SERVER_EMAIL = config("SERVER_EMAIL", default=EMAIL_HOST_USER)
+
+# ZeptoMail Configuration
+ZEPTOMAIL_API_KEY = config("ZEPTOMAIL_API_KEY", default="")
+ZEPTOMAIL_FROM_NAME = config("ZEPTOMAIL_FROM_NAME", default="VendorXprt")

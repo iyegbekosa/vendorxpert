@@ -1,15 +1,15 @@
 """
 Email utilities for VendorXprt application
+Updated to use ZeptoMail HTTP API instead of SMTP
 """
 
-from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
 from django.template.loader import render_to_string
-from django.utils.html import strip_tags
 import logging
 import random
 from django.utils import timezone
 from datetime import timedelta
+from .zeptomail_client import send_zeptomail
 
 logger = logging.getLogger(__name__)
 
@@ -37,21 +37,13 @@ def send_welcome_email(user):
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
-        # Render HTML and text templates
-        html_content = render_to_string("emails/welcome_user.html", context)
-        text_content = render_to_string("emails/welcome_user.txt", context)
-
-        # Create and send email
-        email = EmailMultiAlternatives(
+        # Send email via ZeptoMail
+        result = send_zeptomail(
+            to_email=user.email,
             subject=subject,
-            body=text_content,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[user.email],
+            template_name="welcome_user",
+            context=context,
         )
-        email.attach_alternative(html_content, "text/html")
-
-        # Send the email
-        result = email.send()
 
         if result:
             logger.info(f"Welcome email sent successfully to {user.email}")
@@ -82,18 +74,14 @@ def send_verification_email(email, code, expires_at=None):
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
-        text_content = render_to_string("emails/verification.txt", context)
-        html_content = render_to_string("emails/verification.html", context)
-
-        email_msg = EmailMultiAlternatives(
+        # Send email via ZeptoMail
+        result = send_zeptomail(
+            to_email=email,
             subject=subject,
-            body=text_content,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[email],
+            template_name="verification",
+            context=context,
         )
-        email_msg.attach_alternative(html_content, "text/html")
 
-        result = email_msg.send()
         if result:
             logger.info(f"Verification email sent to {email}")
             return True
@@ -122,18 +110,14 @@ def send_password_reset_email(email, code, expires_at=None):
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
-        text_content = render_to_string("emails/password_reset.txt", context)
-        html_content = render_to_string("emails/password_reset.html", context)
-
-        email_msg = EmailMultiAlternatives(
+        # Send email via ZeptoMail
+        result = send_zeptomail(
+            to_email=email,
             subject=subject,
-            body=text_content,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[email],
+            template_name="password_reset",
+            context=context,
         )
-        email_msg.attach_alternative(html_content, "text/html")
 
-        result = email_msg.send()
         if result:
             logger.info(f"Password reset email sent to {email}")
             return True
@@ -177,21 +161,13 @@ def send_vendor_welcome_email(vendor_profile_or_user):
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
-        # Render HTML and text templates
-        html_content = render_to_string("emails/welcome_vendor.html", context)
-        text_content = render_to_string("emails/welcome_vendor.txt", context)
-
-        # Create and send email
-        email = EmailMultiAlternatives(
+        # Send email via ZeptoMail
+        result = send_zeptomail(
+            to_email=user.email,
             subject=subject,
-            body=text_content,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[user.email],
+            template_name="welcome_vendor",
+            context=context,
         )
-        email.attach_alternative(html_content, "text/html")
-
-        # Send the email
-        result = email.send()
 
         if result:
             logger.info(f"Vendor welcome email sent successfully to {user.email}")
@@ -271,21 +247,13 @@ def send_receipt_email(order):
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
-        # Render HTML and text templates
-        html_content = render_to_string("emails/receipt.html", context)
-        text_content = render_to_string("emails/receipt.txt", context)
-
-        # Create and send email
-        email = EmailMultiAlternatives(
+        # Send email via ZeptoMail
+        result = send_zeptomail(
+            to_email=user.email,
             subject=subject,
-            body=text_content,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[user.email],
+            template_name="receipt",
+            context=context,
         )
-        email.attach_alternative(html_content, "text/html")
-
-        # Send the email
-        result = email.send()
 
         if result:
             logger.info(
@@ -372,25 +340,13 @@ def send_vendor_order_notification(order):
 
                 subject = f"🎉 New Order #{order.ref} - {vendor.store_name}"
 
-                # Render HTML and text templates
-                html_content = render_to_string(
-                    "emails/vendor_order_notification.html", context
-                )
-                text_content = render_to_string(
-                    "emails/vendor_order_notification.txt", context
-                )
-
-                # Create and send email
-                email = EmailMultiAlternatives(
+                # Send email via ZeptoMail
+                result = send_zeptomail(
+                    to_email=vendor.user.email,
                     subject=subject,
-                    body=text_content,
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    to=[vendor.user.email],
+                    template_name="vendor_order_notification",
+                    context=context,
                 )
-                email.attach_alternative(html_content, "text/html")
-
-                # Send the email
-                result = email.send()
 
                 if result:
                     logger.info(
