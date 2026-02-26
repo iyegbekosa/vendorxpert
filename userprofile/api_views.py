@@ -3001,9 +3001,6 @@ def change_plan_api(request):
             print(f"[ERROR] Plan change failed: {error_message}")
             return Response({"error": error_message}, status=400)
 
-    except PaymentProcessingError as e:
-        print(f"[ERROR] Payment processing error during plan change: {str(e)}")
-        return Response({"error": f"Payment processing failed: {str(e)}"}, status=502)
     except Exception as e:
         print(f"[ERROR] Unexpected error during plan change: {str(e)}")
         import traceback
