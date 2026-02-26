@@ -3245,7 +3245,9 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
         return HttpResponse(status=200)
 
     except VendorPlan.DoesNotExist:
-        print(f"[ERROR] Plan not found during plan change payment processing: {metadata}")
+        print(
+            f"[ERROR] Plan not found during plan change payment processing: {metadata}"
+        )
         return HttpResponse(status=404)
     except Exception as e:
         print(f"[ERROR] Error processing plan change payment: {str(e)}")
