@@ -479,7 +479,7 @@ class VendorProfileSerializer(serializers.ModelSerializer):
 
 class VendorUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating vendor store details"""
-    
+
     # Override phone fields to handle custom validation
     phone_number = serializers.CharField(required=False, allow_blank=True)
     whatsapp_number = serializers.CharField(required=False, allow_blank=True)
@@ -488,7 +488,7 @@ class VendorUpdateSerializer(serializers.ModelSerializer):
         model = VendorProfile
         fields = [
             "store_name",
-            "store_description", 
+            "store_description",
             "store_logo",
             "phone_number",
             "whatsapp_number",
@@ -514,79 +514,89 @@ class VendorUpdateSerializer(serializers.ModelSerializer):
         """Validate and normalize phone number to accept both formats"""
         if not value or not value.strip():
             return ""
-            
+
         # Convert to string and clean
         phone_str = str(value).strip().replace(" ", "").replace("-", "")
-        
+
         # Handle Nigerian local format (09025144369 -> +2349025144369)
         if phone_str.startswith("0") and len(phone_str) == 11:
             phone_str = "+234" + phone_str[1:]  # Remove 0 and add +234
-        
+
         # Basic validation for Nigerian phone numbers
         import re
-        if not re.match(r'^\+234[0-9]{10}$', phone_str):
+
+        if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(
                 "Phone number must be in format +2349025144369 or 09025144369"
             )
-        
-        # Check for uniqueness - exclude current vendor if this is an update 
+
+        # Check for uniqueness - exclude current vendor if this is an update
         existing = VendorProfile.objects.filter(phone_number=phone_str)
         if self.instance and self.instance.pk:
             existing = existing.exclude(pk=self.instance.pk)
-        
+
         if existing.exists():
             raise serializers.ValidationError(
                 "A vendor with this phone number already exists."
             )
-        
+
         return phone_str
 
     def validate_whatsapp_number(self, value):
         """Validate and normalize WhatsApp number to accept both formats"""
         if not value or not value.strip():
             return ""
-            
+
         # Convert to string and clean
         phone_str = str(value).strip().replace(" ", "").replace("-", "")
-        
+
         # Handle Nigerian local format (09025144369 -> +2349025144369)
         if phone_str.startswith("0") and len(phone_str) == 11:
             phone_str = "+234" + phone_str[1:]  # Remove 0 and add +234
-        
+
         # Basic validation for Nigerian phone numbers
         import re
-        if not re.match(r'^\+234[0-9]{10}$', phone_str):
+
+        if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(
                 "WhatsApp number must be in format +2349025144369 or 09025144369"
             )
-        
+
         # Check for uniqueness - exclude current vendor if this is an update
         existing = VendorProfile.objects.filter(whatsapp_number=phone_str)
         if self.instance and self.instance.pk:
             existing = existing.exclude(pk=self.instance.pk)
-        
+
         if existing.exists():
             raise serializers.ValidationError(
                 "A vendor with this WhatsApp number already exists."
             )
-        
+
         return phone_str
 
     def save(self, **kwargs):
         """Convert phone numbers to PhoneNumber objects before saving"""
         # Convert validated phone numbers back to PhoneNumber objects
-        if 'phone_number' in self.validated_data and self.validated_data['phone_number']:
+        if (
+            "phone_number" in self.validated_data
+            and self.validated_data["phone_number"]
+        ):
             from phonenumber_field.phonenumber import PhoneNumber
-            self.validated_data['phone_number'] = PhoneNumber.from_string(
-                self.validated_data['phone_number'], region="NG"
+
+            self.validated_data["phone_number"] = PhoneNumber.from_string(
+                self.validated_data["phone_number"], region="NG"
             )
-        
-        if 'whatsapp_number' in self.validated_data and self.validated_data['whatsapp_number']:
-            from phonenumber_field.phonenumber import PhoneNumber  
-            self.validated_data['whatsapp_number'] = PhoneNumber.from_string(
-                self.validated_data['whatsapp_number'], region="NG"
+
+        if (
+            "whatsapp_number" in self.validated_data
+            and self.validated_data["whatsapp_number"]
+        ):
+            from phonenumber_field.phonenumber import PhoneNumber
+
+            self.validated_data["whatsapp_number"] = PhoneNumber.from_string(
+                self.validated_data["whatsapp_number"], region="NG"
             )
-        
+
         return super().save(**kwargs)
 
 
