@@ -1813,8 +1813,8 @@ def edit_product_api(request, pk):
 
     # Handle empty product_image object from JSON requests
     data = request.data.copy()
-    if 'product_image' in data and data['product_image'] == {}:
-        data.pop('product_image')
+    if "product_image" in data and data["product_image"] == {}:
+        data.pop("product_image")
 
     serializer = ProductCreateSerializer(product, data=data, partial=True)
     if serializer.is_valid():
