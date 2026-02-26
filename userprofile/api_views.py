@@ -1801,7 +1801,7 @@ def add_product_api(request):
 )
 @api_view(["PUT"])
 @permission_classes([IsAuthenticated, HasActiveSubscription, VendorFeatureAccess])
-@parser_classes([MultiPartParser, FormParser])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def edit_product_api(request, pk):
     try:
         product = Product.objects.get(pk=pk, vendor=request.user.vendor_profile)
@@ -1811,7 +1811,12 @@ def edit_product_api(request, pk):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    serializer = ProductCreateSerializer(product, data=request.data, partial=True)
+    # Handle empty product_image object from JSON requests
+    data = request.data.copy()
+    if 'product_image' in data and data['product_image'] == {}:
+        data.pop('product_image')
+
+    serializer = ProductCreateSerializer(product, data=data, partial=True)
     if serializer.is_valid():
         serializer.save()
         return Response({"success": True, "message": "Product updated successfully"})
