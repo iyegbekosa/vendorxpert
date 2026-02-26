@@ -386,16 +386,16 @@ def handle_subscription_plan_change_callback(ref, payment_data, metadata):
     from django.utils import timezone
     from datetime import timedelta
 
-    print(f"🎯 [Store Callback] Handling plan change payment: {ref}")
+   
 
     try:
         vendor = VendorProfile.objects.get(pending_ref=ref)
     except VendorProfile.DoesNotExist:
-        print(f"❌ [Store Callback] No vendor with pending ref: {ref}")
+       
         return HttpResponse("Vendor not found for payment reference", status=404)
 
     if payment_data.get("status") != "success":
-        print(f"❌ [Store Callback] Payment failed for ref: {ref}")
+        
         vendor.pending_ref = None
         vendor.save()
         return HttpResponse("Payment was not successful", status=400)
@@ -409,15 +409,13 @@ def handle_subscription_plan_change_callback(ref, payment_data, metadata):
         is_trial_upgrade = metadata.get("is_trial_upgrade", False)
 
         if not new_plan_id:
-            print(f"❌ [Store Callback] Missing new_plan_id in metadata")
+           
             return HttpResponse("Invalid payment metadata", status=400)
 
         new_plan = VendorPlan.objects.get(id=new_plan_id, is_active=True)
         old_plan = VendorPlan.objects.get(id=old_plan_id) if old_plan_id else None
 
-        print(
-            f"📝 [Store Callback] Updating vendor plan: {old_plan.name if old_plan else 'None'} → {new_plan.name}"
-        )
+       
 
         # Update vendor plan
         vendor.plan = new_plan
@@ -427,7 +425,7 @@ def handle_subscription_plan_change_callback(ref, payment_data, metadata):
 
         # Special handling for trial-to-paid conversions
         if vendor.subscription_status == "trial" or is_trial_upgrade:
-            print(f"🎯 [Store Callback] Converting trial user to active subscription")
+           
             vendor.subscription_status = "active"
             vendor.subscription_expiry = timezone.now() + timedelta(days=30)
             vendor.trial_start = None
@@ -455,18 +453,15 @@ def handle_subscription_plan_change_callback(ref, payment_data, metadata):
             notes=notes,
         )
 
-        print(
-            f"✅ [Store Callback] Plan change successful for vendor {vendor.id}: {notes}"
-        )
-
+      
         # Redirect to a success page (you can customize this)
         return redirect("/my_store")  # Or wherever you want users to go after payment
 
     except VendorPlan.DoesNotExist:
-        print(f"❌ [Store Callback] Invalid plan in metadata")
+      
         return HttpResponse("Invalid subscription plan", status=400)
     except Exception as e:
-        print(f"❌ [Store Callback] Error processing plan change: {str(e)}")
+      
         return HttpResponse(f"Error processing plan change: {str(e)}", status=500)
 
 

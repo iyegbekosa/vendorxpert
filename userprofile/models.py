@@ -330,24 +330,12 @@ class VendorProfile(models.Model):
         import uuid
         import requests
 
-        print(f"🔧 [Model] Starting change_plan_with_payment for vendor {self.id}")
-
         if not new_plan or new_plan == self.plan:
-            print(
-                f"❌ [Model] Invalid plan change: new_plan={new_plan}, current_plan={self.plan}"
-            )
+
             return {"success": False, "error": "Invalid plan or already on this plan."}
 
         old_plan = self.plan
         is_upgrade = new_plan.price > (old_plan.price if old_plan else 0)
-
-        print(f"📊 [Model] Plan change details:")
-        print(
-            f"  - Old plan: {old_plan.name if old_plan else 'None'} (₦{old_plan.price if old_plan else 0})"
-        )
-        print(f"  - New plan: {new_plan.name} (₦{new_plan.price})")
-        print(f"  - Is upgrade: {is_upgrade}")
-        print(f"  - Immediate: {immediate}")
 
         # Calculate prorated amount if changing mid-cycle
         prorated_amount = 0
@@ -355,51 +343,37 @@ class VendorProfile(models.Model):
 
         # Special case: Trial users upgrading to MORE expensive paid plans must pay immediately
         if self.subscription_status == "trial" and is_upgrade and new_plan.price > 0:
-            print(
-                f"🚨 [Model] Trial user upgrading to paid plan - Immediate payment required"
-            )
+
             prorated_amount = new_plan.price  # Full monthly amount, not prorated
             requires_payment = True
-            print(
-                f"💳 [Model] Trial upgrade payment: ₦{prorated_amount} (full monthly fee)"
-            )
+
         elif self.subscription_status == "trial" and not is_upgrade:
-            print(f"🔽 [Model] Trial user downgrade - No payment required")
+
             prorated_amount = 0
             requires_payment = False
         elif self.subscription_expiry and not immediate:
             days_remaining = self.get_subscription_days_remaining()
-            print(f"⏰ [Model] Days remaining in subscription: {days_remaining}")
 
             if days_remaining > 0:
                 daily_old_rate = (old_plan.price if old_plan else 0) / 30
                 daily_new_rate = new_plan.price / 30
                 prorated_amount = (daily_new_rate - daily_old_rate) * days_remaining
 
-                print(f"💰 [Model] Prorated calculation:")
-                print(f"  - Daily old rate: ₦{daily_old_rate:.2f}")
-                print(f"  - Daily new rate: ₦{daily_new_rate:.2f}")
-                print(f"  - Prorated amount: ₦{prorated_amount:.2f}")
-
                 # Only require payment for upgrades with positive prorated amount
                 requires_payment = is_upgrade and prorated_amount > 0
-                print(f"💳 [Model] Requires payment: {requires_payment}")
+
         else:
-            print(
-                f"🔄 [Model] Immediate change or no subscription expiry - No proration"
-            )
+            print("[Model] Immediate change or no subscription expiry - No proration")
 
         # If payment is required, process it through Paystack
         if requires_payment and request:
-            print(f"💳 [Model] Processing payment through Paystack")
+
             try:
                 # Generate unique reference for the prorated payment
                 ref = str(uuid.uuid4()).replace("-", "")[:20]
-                print(f"🆔 [Model] Generated payment reference: {ref}")
 
                 # Create Paystack transaction for prorated amount
                 callback_url = f"{request.scheme}://{request.get_host()}{reverse('paystack_callback')}"
-                print(f"🔗 [Model] Callback URL: {callback_url}")
 
                 payload = {
                     "email": self.user.email,
@@ -416,18 +390,11 @@ class VendorProfile(models.Model):
                     },
                 }
 
-                print(f"📦 [Model] Paystack payload:")
-                print(f"  - Email: {payload['email']}")
-                print(f"  - Amount: {payload['amount']} kobo (₦{prorated_amount})")
-                print(f"  - Reference: {payload['reference']}")
-                print(f"  - Metadata: {payload['metadata']}")
-
                 headers = {
                     "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
                     "Content-Type": "application/json",
                 }
 
-                print("🚀 [Model] Sending request to Paystack...")
                 response = requests.post(
                     "https://api.paystack.co/transaction/initialize",
                     json=payload,
@@ -435,29 +402,26 @@ class VendorProfile(models.Model):
                     timeout=30,
                 )
 
-                print(f"📡 [Model] Paystack response status: {response.status_code}")
-
                 if response.status_code != 200:
-                    print(f"❌ [Model] Paystack request failed: {response.text}")
+
                     raise Exception("Failed to initialize payment with Paystack")
 
                 response_data = response.json()
-                print(f"📊 [Model] Paystack response data: {response_data}")
 
                 if not response_data.get("status"):
                     error_msg = response_data.get(
                         "message", "Payment initialization failed"
                     )
-                    print(f"❌ [Model] Paystack returned error: {error_msg}")
+
                     raise Exception(error_msg)
 
                 # Store the pending change details
-                print(f"💾 [Model] Storing pending reference: {ref}")
+
                 self.pending_ref = ref
                 self.save()
 
                 # Log the pending change
-                print("📝 [Model] Logging pending plan change to subscription history")
+
                 SubscriptionHistory.log_event(
                     vendor=self,
                     event_type="plan_upgraded" if is_upgrade else "plan_downgraded",
@@ -469,9 +433,6 @@ class VendorProfile(models.Model):
                 )
 
                 auth_url = response_data["data"]["authorization_url"]
-                print(
-                    f"✅ [Model] Payment URL generated successfully: {auth_url[:50]}..."
-                )
 
                 return {
                     "success": True,
@@ -484,46 +445,36 @@ class VendorProfile(models.Model):
                 }
 
             except requests.Timeout:
-                print("⏰ [Model] Payment service timeout")
+
                 raise Exception("Payment service timeout. Please try again.")
             except requests.RequestException as e:
-                print(f"🌐 [Model] Payment service network error: {str(e)}")
+
                 raise Exception(f"Payment service error: {str(e)}")
             except Exception as e:
-                print(f"💳❌ [Model] Payment processing failed: {str(e)}")
+
                 raise Exception(f"Payment processing failed: {str(e)}")
 
         # If no payment required, process the change immediately
         else:
-            print("🔄 [Model] Processing immediate plan change (no payment required)")
 
             # Update Paystack subscription if vendor has one
             if self.paystack_subscription_code and new_plan.paystack_plan_code:
-                print(
-                    f"🔗 [Model] Updating Paystack subscription: {self.paystack_subscription_code}"
-                )
+
                 try:
                     self._update_paystack_subscription(new_plan)
-                    print("✅ [Model] Paystack subscription updated successfully")
+
                 except Exception as e:
                     # Log the error but don't fail the entire operation for subscription update issues
-                    print(
-                        f"⚠️ [Model] Failed to update Paystack subscription for vendor {self.id}: {str(e)}"
-                    )
+                    print(f"[Model] Failed to update Paystack subscription for vendor {self.id}: {str(e)}")
             else:
-                print(
-                    "🔗 [Model] Skipping Paystack subscription update (no subscription code or plan code)"
-                )
+                print("[Model] Skipping Paystack subscription update (no subscription code or plan code)")
 
-            # Update plan locally
-            print(
-                f"💾 [Model] Updating local plan from {self.plan.name if self.plan else 'None'} to {new_plan.name}"
-            )
+          
             self.plan = new_plan
             self.save()
 
             # Log the successful change
-            print("📝 [Model] Logging successful plan change to subscription history")
+          
             event_type = "plan_upgraded" if is_upgrade else "plan_downgraded"
             SubscriptionHistory.log_event(
                 vendor=self,
@@ -543,7 +494,7 @@ class VendorProfile(models.Model):
                 "payment_status": "completed",
             }
 
-            print(f"✅ [Model] Plan change completed successfully: {result}")
+           
             return result
 
     def _update_paystack_subscription(self, new_plan):
@@ -551,12 +502,9 @@ class VendorProfile(models.Model):
         from django.conf import settings
         import requests
 
-        print(f"🔗 [Model] Starting Paystack subscription update")
-        print(f"  - Subscription code: {self.paystack_subscription_code}")
-        print(f"  - New plan code: {new_plan.paystack_plan_code}")
-
+       
         if not self.paystack_subscription_code or not new_plan.paystack_plan_code:
-            print("⚠️ [Model] Missing subscription or plan code - skipping update")
+          
             return
 
         headers = {
@@ -568,9 +516,7 @@ class VendorProfile(models.Model):
             "plan": new_plan.paystack_plan_code,
         }
 
-        print(f"📦 [Model] Paystack subscription update payload: {payload}")
-        print(f"🚀 [Model] Sending PUT request to Paystack subscription API")
-
+       
         response = requests.put(
             f"https://api.paystack.co/subscription/{self.paystack_subscription_code}",
             json=payload,
@@ -578,15 +524,12 @@ class VendorProfile(models.Model):
             timeout=30,
         )
 
-        print(
-            f"📡 [Model] Paystack subscription update response: {response.status_code}"
-        )
-
+      
         if response.status_code != 200:
-            print(f"❌ [Model] Paystack subscription update failed: {response.text}")
+            
             raise Exception(f"Failed to update Paystack subscription: {response.text}")
 
-        print("✅ [Model] Paystack subscription updated successfully")
+       
 
     def extend_subscription(self, days=30):
         """Extend subscription by specified days"""
