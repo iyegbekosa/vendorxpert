@@ -2911,63 +2911,67 @@ def resume_subscription_api(request):
 def change_plan_api(request):
     """Change subscription plan with prorated billing and payment processing"""
 
-    print(f"🔄 Change plan request initiated by user: {request.user.id}")
-    print(f"📊 Request data: {request.data}")
+    print(f"[CHANGE_PLAN] Change plan request initiated by user: {request.user.id}")
+    print(f"[CHANGE_PLAN] Request data: {request.data}")
 
     try:
         vendor = request.user.vendor_profile
-        print(f"🏪 Vendor found: {vendor.id} - {vendor.store_name}")
-        print(f"📋 Current vendor plan: {vendor.plan.name if vendor.plan else 'None'}")
-        print(f"🔔 Current subscription status: {vendor.subscription_status}")
+        print(f"[VENDOR] Vendor found: {vendor.id} - {vendor.store_name}")
+        print(
+            f"[VENDOR] Current vendor plan: {vendor.plan.name if vendor.plan else 'None'}"
+        )
+        print(f"[VENDOR] Current subscription status: {vendor.subscription_status}")
     except VendorProfile.DoesNotExist:
-        print(f"❌ User {request.user.id} is not a vendor")
+        print(f"[ERROR] User {request.user.id} is not a vendor")
         return Response({"error": "User is not a vendor."}, status=403)
 
     # Use serializer for validation
-    print("🔍 Starting request validation with ChangePlanSerializer")
+    print("[VALIDATION] Starting request validation with ChangePlanSerializer")
     serializer = ChangePlanSerializer(data=request.data, context={"vendor": vendor})
     if not serializer.is_valid():
-        print(f"❌ Validation failed: {serializer.errors}")
+        print(f"[ERROR] Validation failed: {serializer.errors}")
         return Response(serializer.errors, status=400)
 
     validated_data = serializer.validated_data
     plan_id = validated_data["plan_id"]
     immediate = validated_data["immediate"]
 
-    print(f"✅ Validation passed - Plan ID: {plan_id}, Immediate: {immediate}")
+    print(f"[SUCCESS] Validation passed - Plan ID: {plan_id}, Immediate: {immediate}")
 
     try:
         new_plan = VendorPlan.objects.get(id=plan_id, is_active=True)
-        print(f"🎯 Target plan found: {new_plan.name} (₦{new_plan.price}/month)")
+        print(f"[PLAN] Target plan found: {new_plan.name} (₦{new_plan.price}/month)")
     except VendorPlan.DoesNotExist:
-        print(f"❌ Plan not found or inactive: {plan_id}")
+        print(f"[ERROR] Plan not found or inactive: {plan_id}")
         return Response({"error": "Plan not found or inactive."}, status=404)
 
     # Log plan change attempt details
     old_plan_name = vendor.plan.name if vendor.plan else "None"
-    print(f"🔄 Attempting plan change: {old_plan_name} → {new_plan.name}")
+    print(f"[CHANGE_PLAN] Attempting plan change: {old_plan_name} -> {new_plan.name}")
 
     if vendor.subscription_expiry:
         days_remaining = vendor.get_subscription_days_remaining()
-        print(f"📅 Subscription expiry: {vendor.subscription_expiry}")
-        print(f"⏰ Days remaining: {days_remaining}")
+        print(f"[SUBSCRIPTION] Subscription expiry: {vendor.subscription_expiry}")
+        print(f"[SUBSCRIPTION] Days remaining: {days_remaining}")
     else:
-        print("📅 No subscription expiry set")
+        print("[SUBSCRIPTION] No subscription expiry set")
 
     # Use transaction for atomic operation
     try:
-        print("💳 Calling change_plan_with_payment method")
+        print("[PAYMENT] Calling change_plan_with_payment method")
         result = vendor.change_plan_with_payment(
             new_plan, immediate=immediate, request=request
         )
 
-        print(f"💰 Change plan result: {result}")
+        print(f"[PAYMENT] Change plan result: {result}")
 
         if result and result.get("success"):
-            print("✅ Plan change successful!")
-            print(f"💵 Prorated amount: ₦{result.get('prorated_amount', 0)}")
-            print(f"📈 Is upgrade: {result.get('is_upgrade', False)}")
-            print(f"🔄 Payment status: {result.get('payment_status', 'completed')}")
+            print("[SUCCESS] Plan change successful!")
+            print(f"[PAYMENT] Prorated amount: ₦{result.get('prorated_amount', 0)}")
+            print(f"[PLAN] Is upgrade: {result.get('is_upgrade', False)}")
+            print(
+                f"[PAYMENT] Payment status: {result.get('payment_status', 'completed')}"
+            )
 
             response_data = {
                 "message": f"Plan {'upgraded' if result['is_upgrade'] else 'downgraded'} successfully.",
@@ -2983,10 +2987,10 @@ def change_plan_api(request):
                 response_data["authorization_url"] = result["authorization_url"]
                 response_data["payment_status"] = "payment_required"
                 print(
-                    f"💳 Payment required - Authorization URL generated: {result['authorization_url'][:50]}..."
+                    f"[PAYMENT] Payment required - Authorization URL generated: {result['authorization_url'][:50]}..."
                 )
 
-            print(f"📤 Sending successful response: {response_data}")
+            print(f"[RESPONSE] Sending successful response: {response_data}")
             return Response(response_data, status=200)
         else:
             error_message = (
@@ -2994,14 +2998,14 @@ def change_plan_api(request):
                 if result
                 else "Failed to change plan."
             )
-            print(f"❌ Plan change failed: {error_message}")
+            print(f"[ERROR] Plan change failed: {error_message}")
             return Response({"error": error_message}, status=400)
 
     except PaymentProcessingError as e:
-        print(f"💳❌ Payment processing error during plan change: {str(e)}")
+        print(f"[ERROR] Payment processing error during plan change: {str(e)}")
         return Response({"error": f"Payment processing failed: {str(e)}"}, status=502)
     except Exception as e:
-        print(f"🚨 Unexpected error during plan change: {str(e)}")
+        print(f"[ERROR] Unexpected error during plan change: {str(e)}")
         import traceback
 
         traceback.print_exc()
@@ -3177,7 +3181,9 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
         is_trial_upgrade = metadata.get("is_trial_upgrade", False)
 
         if not new_plan_id:
-            print(f"❌ Missing new_plan_id in plan change payment metadata: {metadata}")
+            print(
+                f"[ERROR] Missing new_plan_id in plan change payment metadata: {metadata}"
+            )
             return HttpResponse(status=400)
 
         new_plan = VendorPlan.objects.get(id=new_plan_id, is_active=True)
