@@ -127,4 +127,9 @@ urlpatterns += [
         api_views.paystack_webhook,
         name="paystack_subscription_webhook",
     ),
+    path(
+        "api/update-vendor/",
+        api_views.update_vendor_api,
+        name="update_vendor_api",
+    ),
 ]

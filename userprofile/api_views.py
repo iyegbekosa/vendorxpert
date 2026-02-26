@@ -1395,6 +1395,69 @@ def my_store_api(request):
 
 
 @swagger_auto_schema(
+    method="put",
+    operation_summary="Update Vendor Store Details",
+    operation_description="Update vendor store information including name, description, contact details and social media handles",
+    request_body=VendorUpdateSerializer,
+    responses={
+        200: openapi.Response(
+            description="Vendor details updated successfully",
+            schema=VendorUpdateSerializer,
+        ),
+        400: openapi.Response(description="Invalid data provided"),
+        403: openapi.Response(description="User is not a vendor"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Vendor Management"],
+)
+@swagger_auto_schema(
+    method="patch",
+    operation_summary="Partially Update Vendor Store Details", 
+    operation_description="Partially update vendor store information. Only provided fields will be updated.",
+    request_body=VendorUpdateSerializer,
+    responses={
+        200: openapi.Response(
+            description="Vendor details updated successfully",
+            schema=VendorUpdateSerializer,
+        ),
+        400: openapi.Response(description="Invalid data provided"),
+        403: openapi.Response(description="User is not a vendor"),
+        401: openapi.Response(description="Authentication required"),
+    },
+    tags=["Vendor Management"],
+)
+@api_view(["PUT", "PATCH"])
+@permission_classes([IsAuthenticated, VendorFeatureAccess])
+def update_vendor_api(request):
+    """
+    Update vendor store details via PUT (full update) or PATCH (partial update)
+    
+    Allows vendors to update their store information including:
+    - Store name and description
+    - Store logo 
+    - Contact information (phone, WhatsApp)
+    - Social media handles (Instagram, TikTok)
+    """
+    try:
+        vendor = request.user.vendor_profile
+    except AttributeError:
+        return Response({"error": "User is not a vendor."}, status=403)
+    
+    # Use partial=True for PATCH, False for PUT
+    serializer = VendorUpdateSerializer(
+        vendor, 
+        data=request.data, 
+        partial=(request.method == "PATCH")
+    )
+    
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=200)
+    else:
+        return Response(serializer.errors, status=400)
+
+
+@swagger_auto_schema(
     method="get",
     operation_summary="Get My Subscription Status",
     operation_description="Get the current user's subscription status and details",
