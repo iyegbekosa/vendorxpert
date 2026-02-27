@@ -852,17 +852,22 @@ def checkout_api(request):
                 products_without_subaccount.append(product.vendor.store_name)
                 total_unsplit_amount += price_kobo
 
-        # Handle admin share: only unsplit amounts + platform fee if no vendor splits
+        # Handle admin share: unsplit amounts + ensure bearer is in split group
         admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
-        if admin_subaccount and total_unsplit_amount > 0:
-            # Only add unsplit amounts to admin, not the platform fee
-            # The platform fee is handled by bearer_subaccount in Paystack
-            vendor_totals[admin_subaccount] = total_unsplit_amount
+        if admin_subaccount:
+            if total_unsplit_amount > 0:
+                # Add unsplit amounts to admin
+                vendor_totals[admin_subaccount] = total_unsplit_amount
+            else:
+                # Admin is bearer but has no products - add minimal amount to be in split group
+                # Paystack requires bearer subaccount to be part of split
+                vendor_totals[admin_subaccount] = estimated_fee_kobo
 
-        # The split should only include vendor shares from product prices
-        # Paystack will automatically charge fees to the bearer_subaccount
-        # Total split should equal the product prices (not including fees)
+        # The split should include vendor shares + admin fees when admin receives them
         expected_split_total = total_price_kobo
+        if admin_subaccount in vendor_totals and total_unsplit_amount == 0:
+            # Admin is receiving fees as bearer, add fee to expected total
+            expected_split_total += estimated_fee_kobo
 
         # Remove any subaccounts with 0 amount
         vendor_totals = {k: v for k, v in vendor_totals.items() if v > 0}
@@ -908,14 +913,16 @@ def checkout_api(request):
                 status=400,
             )
 
-        # Final validation
+        # Final validation - split should not exceed total amount customer pays
         final_split_total = sum(vendor_totals.values())
-        if final_split_total > total_price_kobo:
+        if final_split_total > amount_kobo:
             return Response(
                 {
-                    "detail": f"Split configuration error. Split total ({final_split_total}) exceeds product prices ({total_price_kobo})",
+                    "detail": f"Split configuration error. Split total ({final_split_total}) exceeds total amount ({amount_kobo})",
                     "debug": {
+                        "amount_kobo": amount_kobo,
                         "total_price_kobo": total_price_kobo,
+                        "estimated_fee_kobo": estimated_fee_kobo,
                         "vendor_totals": dict(vendor_totals),
                         "split_total": final_split_total,
                     },
@@ -931,7 +938,7 @@ def checkout_api(request):
         }
 
         # Only add split if we have valid subaccounts
-        if vendor_totals and final_split_total <= total_price_kobo:
+        if vendor_totals and final_split_total <= amount_kobo:
             payload["split"] = split
 
         headers = {
