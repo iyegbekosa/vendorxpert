@@ -227,6 +227,8 @@ def checkout(request):
 
             # Build vendor splits
             vendor_totals = defaultdict(int)
+            products_without_subaccount = []
+            
             for item in cart:
                 product = item["product"]
                 quantity = int(item["quantity"])
@@ -235,19 +237,33 @@ def checkout(request):
                 subaccount_code = product.vendor.subaccount_code
                 if subaccount_code:
                     vendor_totals[subaccount_code] += price_kobo
+                else:
+                    # Track products that don't have a vendor subaccount
+                    products_without_subaccount.append(product.title)
 
-            admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
-            vendor_totals[admin_subaccount] += estimated_fee_kobo
+            # If any products don't have a vendor subaccount, send all payments to admin
+            if products_without_subaccount:
+                logger.warning(
+                    f"Products without subaccounts won't split: {products_without_subaccount}. "
+                    f"All payments will go to admin account."
+                )
+                # Send everything to admin account if any vendor is missing subaccount
+                split = None
+                admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
+            else:
+                # Normal split logic only when all vendors have subaccounts
+                admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
+                vendor_totals[admin_subaccount] += estimated_fee_kobo
 
-            split = {
-                "type": "flat",
-                "bearer_type": "subaccount",
-                "bearer_subaccount": admin_subaccount,
-                "subaccounts": [
-                    {"subaccount": sub, "share": share}
-                    for sub, share in vendor_totals.items()
-                ],
-            }
+                split = {
+                    "type": "flat",
+                    "bearer_type": "subaccount",
+                    "bearer_subaccount": admin_subaccount,
+                    "subaccounts": [
+                        {"subaccount": sub, "share": share}
+                        for sub, share in vendor_totals.items()
+                    ],
+                }
 
             payment = Payment.objects.create(
                 user=user, order=order, amount=total_price, ref=ref, status="pending"
@@ -259,7 +275,7 @@ def checkout(request):
                 f"{protocol}://{request.get_host()}{reverse('paystack_callback')}"
             )
 
-            if not split["subaccounts"]:
+            if split and not split.get("subaccounts"):
                 return HttpResponse(
                     "No vendor subaccounts were found. Payment cannot proceed.",
                     status=400,
@@ -270,9 +286,16 @@ def checkout(request):
                 "amount": amount_kobo,
                 "reference": payment.ref,
                 "callback_url": callback_url,
+                "metadata": {
+                    "order_id": order.id,
+                    "user_id": user.id,
+                }
             }
-            if split:
+            
+            # Only include split if configured and has subaccounts
+            if split and split.get("subaccounts"):
                 payload["split"] = split
+                logger.info(f"Payment {payment.ref}: Using subaccount splits with {len(split['subaccounts'])} recipients")
 
             headers = {
                 "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
