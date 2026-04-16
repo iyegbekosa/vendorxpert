@@ -872,9 +872,61 @@ def checkout_api(request):
         # Remove any subaccounts with 0 amount
         vendor_totals = {k: v for k, v in vendor_totals.items() if v > 0}
 
-        # Ensure split totals match the product prices
+        # ============== COMPREHENSIVE SUBACCOUNT VALIDATION ==============
+        
+        # 1. Validate admin_subaccount is set
+        if not admin_subaccount:
+            logger.error("Admin subaccount not configured in settings.ADMIN_SUBACCOUNT_CODE")
+            return Response(
+                {"detail": "Payment system configuration error. Admin subaccount not set."},
+                status=500,
+            )
+        
+        # 2. Validate admin_subaccount format (must start with SUB_)
+        if not admin_subaccount.startswith("SUB_"):
+            logger.error(f"Invalid admin subaccount format: {admin_subaccount}. Must start with 'SUB_'")
+            return Response(
+                {"detail": "Payment system configuration error. Invalid admin subaccount format."},
+                status=500,
+            )
+        
+        # 3. Validate all vendor subaccount codes
+        for subaccount_code, share in vendor_totals.items():
+            # Check format
+            if not subaccount_code.startswith("SUB_"):
+                logger.error(f"Invalid subaccount code format: {subaccount_code}. Must start with 'SUB_'")
+                return Response(
+                    {"detail": f"Invalid subaccount code format: {subaccount_code}"},
+                    status=400,
+                )
+            
+            # Check for negative amounts
+            if share < 0:
+                logger.error(f"Negative share amount for {subaccount_code}: {share}")
+                return Response(
+                    {"detail": f"Invalid share amount (negative) for subaccount {subaccount_code}"},
+                    status=400,
+                )
+            
+            # Check minimum non-zero share (at least 1 kobo)
+            if share == 0:
+                logger.error(f"Zero share amount for {subaccount_code}")
+                return Response(
+                    {"detail": f"Zero share amount for subaccount {subaccount_code}"},
+                    status=400,
+                )
+        
+        # 4. Log all subaccount codes and amounts for debugging
+        logger.info(f"Payment {ref}: Subaccount split configuration:")
+        logger.info(f"  Admin Bearer: {admin_subaccount}")
+        for subaccount_code, share in vendor_totals.items():
+            share_naira = share / 100  # Convert from kobo to naira
+            logger.info(f"    {subaccount_code}: ₦{share_naira:,.2f} ({share} kobo)")
+        
+        # 5. Ensure split totals match the product prices
         actual_split_total = sum(vendor_totals.values())
         if actual_split_total != expected_split_total:
+            logger.error(f"Payment {ref}: Split total mismatch. Expected {expected_split_total}, got {actual_split_total}")
             return Response(
                 {
                     "detail": f"Split configuration error. Split total ({actual_split_total}) does not match product prices ({expected_split_total})",
@@ -897,6 +949,9 @@ def checkout_api(request):
                 for sub, share in vendor_totals.items()
             ],
         }
+        
+        # Log final split configuration
+        logger.debug(f"Payment {ref}: Final split payload: {split}")
 
         payment = Payment.objects.create(
             user=user, order=order, amount=total_price, ref=ref, status="pending"
@@ -946,6 +1001,8 @@ def checkout_api(request):
             "Content-Type": "application/json",
         }
 
+        logger.info(f"Payment {ref}: Sending to Paystack. Amount: ₦{amount_kobo/100:,.2f}, Subaccounts: {len(vendor_totals)}")
+        
         response = requests.post(
             "https://api.paystack.co/transaction/initialize",
             json=payload,
@@ -956,12 +1013,14 @@ def checkout_api(request):
             res_data = response.json()
             payment.paystack_init_response = res_data
             payment.save()
-        except ValueError:
+        except ValueError as e:
+            logger.error(f"Payment {ref}: Paystack returned invalid JSON: {response.text}")
             return Response(
                 {"detail": "Paystack returned an invalid response."}, status=502
             )
 
         if response.status_code == 200 and res_data.get("status"):
+            logger.info(f"Payment {ref}: Successfully initialized with Paystack. Access code: {res_data['data'].get('access_code')}")
             return Response(
                 {
                     "authorization_url": res_data["data"]["authorization_url"],
@@ -971,8 +1030,19 @@ def checkout_api(request):
                 status=200,
             )
         else:
+            error_msg = res_data.get("message", "Unknown Paystack error")
+            logger.error(f"Payment {ref}: Paystack initialization failed. Status: {response.status_code}, Response: {res_data}")
+            
+            # Check for specific channel/subaccount errors
+            if "channel" in error_msg.lower() or "subaccount" in error_msg.lower():
+                logger.error(f"Payment {ref}: Channel/Subaccount error detected. Subaccounts used: {list(vendor_totals.keys())}")
+                logger.error(f"Payment {ref}: Bearer subaccount: {admin_subaccount}")
+            
             return Response(
-                {"detail": res_data.get("message", "Unknown Paystack error")},
+                {
+                    "detail": error_msg,
+                    "paystack_status": response.status_code,
+                },
                 status=400,
             )
 
