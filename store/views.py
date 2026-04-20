@@ -262,14 +262,15 @@ def checkout(request):
                 )
             
             # Create split with vendors and admin as bearer if configured
-            # If admin subaccount is configured, add it to the split with platform fee
-            # Paystack requires bearer subaccount to be part of the split group
+            # Calculate what admin should receive: platform fee + products without vendor subaccounts
+            admin_amount = estimated_fee_kobo + (total_price_kobo - sum(vendor_totals.values()))
+            
             split = None
             split_subaccounts = list(vendor_totals.items())
             
             if admin_subaccount:
-                # Add admin subaccount with platform fee to the split
-                split_subaccounts.append((admin_subaccount, estimated_fee_kobo))
+                # Add admin subaccount with its total (fee + unsplit products)
+                split_subaccounts.append((admin_subaccount, admin_amount))
             
             # Only create split if we have subaccounts to split to
             if split_subaccounts:
