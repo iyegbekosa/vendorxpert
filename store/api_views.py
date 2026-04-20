@@ -893,11 +893,15 @@ def checkout_api(request):
             "Content-Type": "application/json",
         }
 
+        logger.info(f"Payment {ref}: Sending payload to Paystack: {payload}")
+
         response = requests.post(
             "https://api.paystack.co/transaction/initialize",
             json=payload,
             headers=headers,
         )
+
+        logger.info(f"Payment {ref}: Paystack HTTP {response.status_code} — raw response: {response.text}")
 
         try:
             res_data = response.json()
