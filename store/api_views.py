@@ -834,24 +834,6 @@ def checkout_api(request):
         # Total amount customer pays (includes platform fee)
         amount_kobo = total_price_kobo + estimated_fee_kobo
 
-        # Calculate vendor shares from the product prices only
-        vendor_totals = defaultdict(int)
-        products_without_subaccount = []
-        total_unsplit_amount = 0
-
-        for item in cart:
-            product = item["product"]
-            quantity = int(item["quantity"])
-            price_kobo = int(product.price * quantity * 100)
-
-            subaccount_code = product.vendor.subaccount_code
-            if subaccount_code:
-                vendor_totals[subaccount_code] += price_kobo
-            else:
-                # Track products from vendors without subaccount setup
-                products_without_subaccount.append(product.vendor.store_name)
-                total_unsplit_amount += price_kobo
-
         # Calculate vendor shares - only from product prices, NOT platform fees
         vendor_totals = defaultdict(int)
         products_without_subaccount = []
@@ -953,6 +935,11 @@ def checkout_api(request):
             if admin_subaccount:
                 split["bearer_type"] = "subaccount"
                 split["bearer_subaccount"] = admin_subaccount
+
+        # Create payment record
+        payment = Payment.objects.create(
+            user=user, order=order, amount=total_price, ref=ref, status="pending"
+        )
 
         protocol = "https" if request.is_secure() else "http"
         # Redirect to frontend success page instead of backend callback
