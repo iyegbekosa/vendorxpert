@@ -11,6 +11,9 @@ import requests
 from django.core.files.base import ContentFile
 from urllib.parse import urlparse
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -439,18 +442,28 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
             request.user.is_vendor = True
             request.user.save()
 
-            # Step 4: Create Paystack subaccount and link it to the vendor
+            # Step 4: Create Paystack subaccount - THIS IS MANDATORY
             try:
                 create_paystack_subaccount(vendor, account_number, bank_code)
+                logger.info(f"✅ Paystack subaccount created for vendor {vendor.pk} ({vendor.store_name})")
             except Exception as paystack_error:
-                # If Paystack fails, we still have the vendor. Print error so devs see it.
-                print(
-                    f"[userprofile] Failed to create Paystack subaccount for vendor {vendor.pk}: {paystack_error}"
+                # CRITICAL: Paystack subaccount is required for payment splitting
+                # Delete the vendor and revert user.is_vendor flag
+                error_msg = str(paystack_error)
+                logger.error(
+                    f"❌ BLOCKING: Paystack subaccount creation failed for {vendor.store_name}: {error_msg}"
                 )
-
-                # Don't raise the error - let the vendor registration succeed
-                pass
-
+                
+                # Cleanup: Remove vendor and revert vendor status
+                vendor.delete()
+                request.user.is_vendor = False
+                request.user.save()
+                
+                # Raise validation error with clear message to user
+                raise serializers.ValidationError(
+                    f"Payment system setup failed: {error_msg}. "
+                    f"Please verify your bank details (account number and bank code) and try again."
+                )
             return vendor
 
         except Exception as e:

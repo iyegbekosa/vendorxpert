@@ -241,6 +241,17 @@ def checkout(request):
                     # Track products that don't have a vendor subaccount
                     products_without_subaccount.append(product.title)
 
+            # Validate admin subaccount before using in split
+            admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
+            if not admin_subaccount or not admin_subaccount.strip():
+                logger.error("ADMIN_SUBACCOUNT_CODE is not configured. Set it in environment variables.")
+                return HttpResponse(
+                    "Payment system configuration error. Admin subaccount not configured.",
+                    status=500,
+                )
+            
+            admin_subaccount = admin_subaccount.strip()
+
             # If any products don't have a vendor subaccount, send all payments to admin
             if products_without_subaccount:
                 logger.warning(
@@ -249,10 +260,8 @@ def checkout(request):
                 )
                 # Send everything to admin account if any vendor is missing subaccount
                 split = None
-                admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
             else:
                 # Normal split logic only when all vendors have subaccounts
-                admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
                 vendor_totals[admin_subaccount] += estimated_fee_kobo
 
                 split = {

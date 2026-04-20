@@ -1108,12 +1108,6 @@ def register_vendor_api(request):
                 "subscription_status": vendor.subscription_status,
             }
 
-            # Add warning if Paystack setup might have failed
-            if not vendor.subaccount_code:
-                response_data["warning"] = (
-                    "Vendor account created but payment setup may be incomplete. Please contact support if needed."
-                )
-
             return Response(response_data, status=status.HTTP_201_CREATED)
 
         except Exception as e:
