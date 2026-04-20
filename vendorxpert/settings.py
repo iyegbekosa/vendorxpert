@@ -216,7 +216,7 @@ SIMPLE_JWT = {
 
 # CORS settings for frontend integration
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
+    "http://vendorxprt.com",
     "http://127.0.0.1:3000",
     "http://192.168.0.114:3000",
 ]

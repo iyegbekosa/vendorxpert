@@ -241,38 +241,41 @@ def checkout(request):
                     # Track products that don't have a vendor subaccount
                     products_without_subaccount.append(product.title)
 
-            # Validate admin subaccount before using in split
+            # Get admin subaccount
             admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
-            if not admin_subaccount or not admin_subaccount.strip():
-                logger.error("ADMIN_SUBACCOUNT_CODE is not configured. Set it in environment variables.")
-                return HttpResponse(
-                    "Payment system configuration error. Admin subaccount not configured.",
-                    status=500,
-                )
-            
-            admin_subaccount = admin_subaccount.strip()
+            if admin_subaccount and isinstance(admin_subaccount, str):
+                admin_subaccount = admin_subaccount.strip()
+                if not admin_subaccount.startswith("ACCT_"):
+                    logger.error(f"Invalid admin subaccount format: {admin_subaccount}. Must start with 'ACCT_'")
+                    return HttpResponse(
+                        "Payment system configuration error. Invalid admin subaccount format.",
+                        status=500,
+                    )
+            else:
+                admin_subaccount = None
 
-            # If any products don't have a vendor subaccount, send all payments to admin
+            # If any products don't have a vendor subaccount, log warning
             if products_without_subaccount:
                 logger.warning(
                     f"Products without subaccounts won't split: {products_without_subaccount}. "
-                    f"All payments will go to admin account."
+                    f"Those payments will go to admin wallet."
                 )
-                # Send everything to admin account if any vendor is missing subaccount
-                split = None
-            else:
-                # Normal split logic only when all vendors have subaccounts
-                vendor_totals[admin_subaccount] += estimated_fee_kobo
-
+            
+            # Create split with vendors and admin as bearer if configured
+            split = None
+            if vendor_totals:
                 split = {
                     "type": "flat",
-                    "bearer_type": "subaccount",
-                    "bearer_subaccount": admin_subaccount,
                     "subaccounts": [
                         {"subaccount": sub, "share": share}
                         for sub, share in vendor_totals.items()
                     ],
                 }
+                
+                # Add admin as bearer if configured
+                if admin_subaccount:
+                    split["bearer_type"] = "subaccount"
+                    split["bearer_subaccount"] = admin_subaccount
 
             payment = Payment.objects.create(
                 user=user, order=order, amount=total_price, ref=ref, status="pending"

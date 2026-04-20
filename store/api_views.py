@@ -852,51 +852,60 @@ def checkout_api(request):
                 products_without_subaccount.append(product.vendor.store_name)
                 total_unsplit_amount += price_kobo
 
-        # Handle admin share: unsplit amounts + ensure bearer is in split group
-        admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
-        if admin_subaccount:
-            if total_unsplit_amount > 0:
-                # Add unsplit amounts to admin
-                vendor_totals[admin_subaccount] = total_unsplit_amount
-            else:
-                # Admin is bearer but has no products - add minimal amount to be in split group
-                # Paystack requires bearer subaccount to be part of split
-                vendor_totals[admin_subaccount] = estimated_fee_kobo
+        # Calculate vendor shares - only from product prices, NOT platform fees
+        vendor_totals = defaultdict(int)
+        products_without_subaccount = []
 
-        # The split should include vendor shares + admin fees when admin receives them
-        expected_split_total = total_price_kobo
-        if admin_subaccount in vendor_totals and total_unsplit_amount == 0:
-            # Admin is receiving fees as bearer, add fee to expected total
-            expected_split_total += estimated_fee_kobo
+        for item in cart:
+            product = item["product"]
+            quantity = int(item["quantity"])
+            price_kobo = int(product.price * quantity * 100)
+
+            subaccount_code = product.vendor.subaccount_code
+            if subaccount_code:
+                vendor_totals[subaccount_code] += price_kobo
+            else:
+                # Products without vendor subaccount won't be included in split
+                # All their payments go to admin (main Paystack wallet)
+                products_without_subaccount.append(product.vendor.store_name)
+                # Don't add to vendor_totals - let it go to admin wallet
 
         # Remove any subaccounts with 0 amount
         vendor_totals = {k: v for k, v in vendor_totals.items() if v > 0}
 
-        # ============== COMPREHENSIVE SUBACCOUNT VALIDATION ==============
+        # ============== ADMIN SUBACCOUNT SETUP ==============
         
-        # 1. Validate admin_subaccount is set
-        if not admin_subaccount:
-            logger.error("Admin subaccount not configured in settings.ADMIN_SUBACCOUNT_CODE")
-            return Response(
-                {"detail": "Payment system configuration error. Admin subaccount not set."},
-                status=500,
-            )
+        # Get admin subaccount code
+        admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
+        if not admin_subaccount or not isinstance(admin_subaccount, str) or not admin_subaccount.strip():
+            logger.warning("ADMIN_SUBACCOUNT_CODE not configured. Platform fee will stay in main wallet.")
+            admin_subaccount = None
+        else:
+            admin_subaccount = admin_subaccount.strip()
+            # Validate format - Paystack subaccounts should start with ACCT_
+            if not admin_subaccount.startswith("ACCT_"):
+                logger.error(f"Invalid admin subaccount format: {admin_subaccount}. Must start with 'ACCT_'")
+                return Response(
+                    {"detail": f"Invalid admin subaccount format. Must start with 'ACCT_'"},
+                    status=500,
+                )
+
+        # ============== VENDOR SUBACCOUNT VALIDATION ==============
         
-        # 2. Validate admin_subaccount format (must start with SUB_)
-        if not admin_subaccount.startswith("SUB_"):
-            logger.error(f"Invalid admin subaccount format: {admin_subaccount}. Must start with 'SUB_'")
-            return Response(
-                {"detail": "Payment system configuration error. Invalid admin subaccount format."},
-                status=500,
-            )
-        
-        # 3. Validate all vendor subaccount codes
+        # Validate all vendor subaccount codes (these MUST exist and be valid)
         for subaccount_code, share in vendor_totals.items():
-            # Check format
-            if not subaccount_code.startswith("SUB_"):
-                logger.error(f"Invalid subaccount code format: {subaccount_code}. Must start with 'SUB_'")
+            # Check format - Paystack subaccounts start with ACCT_
+            if not subaccount_code or not isinstance(subaccount_code, str):
+                logger.error(f"Invalid subaccount code: {subaccount_code}")
                 return Response(
                     {"detail": f"Invalid subaccount code format: {subaccount_code}"},
+                    status=400,
+                )
+            
+            if not subaccount_code.startswith("ACCT_"):
+                logger.error(f"Invalid subaccount code format: {subaccount_code}. Must start with 'ACCT_'")
+                return Response(
+                    {"detail": f"Invalid subaccount code format: {subaccount_code}. Must start with 'ACCT_'"},
                     status=400,
                 )
             
@@ -916,74 +925,42 @@ def checkout_api(request):
                     status=400,
                 )
         
-        # 4. Log all subaccount codes and amounts for debugging
-        logger.info(f"Payment {ref}: Subaccount split configuration:")
-        logger.info(f"  Admin Bearer: {admin_subaccount}")
+        # Log split configuration for debugging
+        logger.info(f"Payment {ref}: Paystack split configuration:")
+        logger.info(f"  Total product amount from vendors with subaccounts: ₦{sum(vendor_totals.values())/100:,.2f}")
+        logger.info(f"  Platform fee (stays in main wallet): ₦{estimated_fee_kobo/100:,.2f}")
+        if admin_subaccount:
+            logger.info(f"  Admin subaccount: {admin_subaccount}")
+        if products_without_subaccount:
+            logger.info(f"  Products going to admin wallet (no vendor subaccount): {products_without_subaccount}")
+        
         for subaccount_code, share in vendor_totals.items():
             share_naira = share / 100  # Convert from kobo to naira
-            logger.info(f"    {subaccount_code}: ₦{share_naira:,.2f} ({share} kobo)")
+            logger.info(f"    [{subaccount_code}]: ₦{share_naira:,.2f}")
         
-        # 5. Ensure split totals match the product prices
-        actual_split_total = sum(vendor_totals.values())
-        if actual_split_total != expected_split_total:
-            logger.error(f"Payment {ref}: Split total mismatch. Expected {expected_split_total}, got {actual_split_total}")
-            return Response(
-                {
-                    "detail": f"Split configuration error. Split total ({actual_split_total}) does not match product prices ({expected_split_total})",
-                    "debug": {
-                        "expected_split_total": expected_split_total,
-                        "actual_split_total": actual_split_total,
-                        "vendor_totals": dict(vendor_totals),
-                        "total_unsplit_amount": total_unsplit_amount,
-                    },
-                },
-                status=400,
-            )
-
-        split = {
-            "type": "flat",
-            "bearer_type": "subaccount",
-            "bearer_subaccount": admin_subaccount,
-            "subaccounts": [
-                {"subaccount": sub, "share": share}
-                for sub, share in vendor_totals.items()
-            ],
-        }
-        
-        # Log final split configuration
-        logger.debug(f"Payment {ref}: Final split payload: {split}")
-
-        payment = Payment.objects.create(
-            user=user, order=order, amount=total_price, ref=ref, status="pending"
-        )
+        # Build split payload with admin as bearer if configured
+        split = None
+        if vendor_totals or admin_subaccount:
+            split = {
+                "type": "flat",
+                "subaccounts": [
+                    {"subaccount": sub, "share": share}
+                    for sub, share in vendor_totals.items()
+                ],
+            }
+            
+            # If admin subaccount is configured, add as bearer
+            if admin_subaccount:
+                split["bearer_type"] = "subaccount"
+                split["bearer_subaccount"] = admin_subaccount
 
         protocol = "https" if request.is_secure() else "http"
         # Redirect to frontend success page instead of backend callback
-        callback_url = f"http://localhost:3000/success?reference={ref}&amount={total_price}&status=success"
+        callback_url = f"https://vendorxprt.com/success?reference={ref}&amount={total_price}&status=success"
 
-        # Check if we have any subaccounts to split to
-        if not vendor_totals:
-            return Response(
-                {"detail": "No vendor subaccounts were found. Payment cannot proceed."},
-                status=400,
-            )
-
-        # Final validation - split should not exceed total amount customer pays
-        final_split_total = sum(vendor_totals.values())
-        if final_split_total > amount_kobo:
-            return Response(
-                {
-                    "detail": f"Split configuration error. Split total ({final_split_total}) exceeds total amount ({amount_kobo})",
-                    "debug": {
-                        "amount_kobo": amount_kobo,
-                        "total_price_kobo": total_price_kobo,
-                        "estimated_fee_kobo": estimated_fee_kobo,
-                        "vendor_totals": dict(vendor_totals),
-                        "split_total": final_split_total,
-                    },
-                },
-                status=400,
-            )
+        # Split payload (optional - can proceed without split if no vendors have subaccounts)
+        if not split and not vendor_totals:
+            logger.warning(f"Payment {ref}: No vendors with subaccounts. All funds go to admin wallet.")
 
         payload = {
             "email": user.email,
@@ -992,16 +969,17 @@ def checkout_api(request):
             "callback_url": callback_url,
         }
 
-        # Only add split if we have valid subaccounts
-        if vendor_totals and final_split_total <= amount_kobo:
+        # Only add split if we have vendor subaccounts to split to
+        if split:
             payload["split"] = split
+            logger.info(f"Payment {ref}: Using vendor subaccount split with {len(vendor_totals)} recipients")
 
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
             "Content-Type": "application/json",
         }
 
-        logger.info(f"Payment {ref}: Sending to Paystack. Amount: ₦{amount_kobo/100:,.2f}, Subaccounts: {len(vendor_totals)}")
+        logger.info(f"Payment {ref}: Paystack initialization. Amount: ₦{amount_kobo/100:,.2f}")
         
         response = requests.post(
             "https://api.paystack.co/transaction/initialize",
@@ -1032,11 +1010,6 @@ def checkout_api(request):
         else:
             error_msg = res_data.get("message", "Unknown Paystack error")
             logger.error(f"Payment {ref}: Paystack initialization failed. Status: {response.status_code}, Response: {res_data}")
-            
-            # Check for specific channel/subaccount errors
-            if "channel" in error_msg.lower() or "subaccount" in error_msg.lower():
-                logger.error(f"Payment {ref}: Channel/Subaccount error detected. Subaccounts used: {list(vendor_totals.keys())}")
-                logger.error(f"Payment {ref}: Bearer subaccount: {admin_subaccount}")
             
             return Response(
                 {
