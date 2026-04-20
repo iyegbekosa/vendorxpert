@@ -262,17 +262,26 @@ def checkout(request):
                 )
             
             # Create split with vendors and admin as bearer if configured
+            # If admin subaccount is configured, add it to the split with platform fee
+            # Paystack requires bearer subaccount to be part of the split group
             split = None
-            if vendor_totals:
+            split_subaccounts = list(vendor_totals.items())
+            
+            if admin_subaccount:
+                # Add admin subaccount with platform fee to the split
+                split_subaccounts.append((admin_subaccount, estimated_fee_kobo))
+            
+            # Only create split if we have subaccounts to split to
+            if split_subaccounts:
                 split = {
                     "type": "flat",
                     "subaccounts": [
                         {"subaccount": sub, "share": share}
-                        for sub, share in vendor_totals.items()
+                        for sub, share in split_subaccounts
                     ],
                 }
                 
-                # Add admin as bearer if configured
+                # If admin subaccount is configured, set as bearer
                 if admin_subaccount:
                     split["bearer_type"] = "subaccount"
                     split["bearer_subaccount"] = admin_subaccount
@@ -287,12 +296,6 @@ def checkout(request):
                 f"{protocol}://{request.get_host()}{reverse('paystack_callback')}"
             )
 
-            if split and not split.get("subaccounts"):
-                return HttpResponse(
-                    "No vendor subaccounts were found. Payment cannot proceed.",
-                    status=400,
-                )
-
             payload = {
                 "email": user.email,
                 "amount": amount_kobo,
@@ -304,10 +307,12 @@ def checkout(request):
                 }
             }
             
-            # Only include split if configured and has subaccounts
-            if split and split.get("subaccounts"):
+            # Only include split if configured
+            if split:
                 payload["split"] = split
                 logger.info(f"Payment {payment.ref}: Using subaccount splits with {len(split['subaccounts'])} recipients")
+            else:
+                logger.info(f"Payment {payment.ref}: No split configured. All funds go to main wallet.")
 
             headers = {
                 "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",

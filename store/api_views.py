@@ -912,7 +912,7 @@ def checkout_api(request):
         logger.info(f"  Total product amount from vendors with subaccounts: ₦{sum(vendor_totals.values())/100:,.2f}")
         logger.info(f"  Platform fee (stays in main wallet): ₦{estimated_fee_kobo/100:,.2f}")
         if admin_subaccount:
-            logger.info(f"  Admin subaccount: {admin_subaccount}")
+            logger.info(f"  Admin subaccount (bearer): {admin_subaccount}")
         if products_without_subaccount:
             logger.info(f"  Products going to admin wallet (no vendor subaccount): {products_without_subaccount}")
         
@@ -920,18 +920,27 @@ def checkout_api(request):
             share_naira = share / 100  # Convert from kobo to naira
             logger.info(f"    [{subaccount_code}]: ₦{share_naira:,.2f}")
         
-        # Build split payload with admin as bearer if configured
+        # Build split payload
+        # If admin subaccount is configured, add it to the split with platform fee
+        # Paystack requires bearer subaccount to be part of the split group
         split = None
-        if vendor_totals or admin_subaccount:
+        split_subaccounts = list(vendor_totals.items())
+        
+        if admin_subaccount:
+            # Add admin subaccount with platform fee to the split
+            split_subaccounts.append((admin_subaccount, estimated_fee_kobo))
+        
+        # Only create split if we have subaccounts to split to
+        if split_subaccounts:
             split = {
                 "type": "flat",
                 "subaccounts": [
                     {"subaccount": sub, "share": share}
-                    for sub, share in vendor_totals.items()
+                    for sub, share in split_subaccounts
                 ],
             }
             
-            # If admin subaccount is configured, add as bearer
+            # If admin subaccount is configured, set as bearer
             if admin_subaccount:
                 split["bearer_type"] = "subaccount"
                 split["bearer_subaccount"] = admin_subaccount
@@ -945,10 +954,6 @@ def checkout_api(request):
         # Redirect to frontend success page instead of backend callback
         callback_url = f"https://vendorxprt.com/success?reference={ref}&amount={total_price}&status=success"
 
-        # Split payload (optional - can proceed without split if no vendors have subaccounts)
-        if not split and not vendor_totals:
-            logger.warning(f"Payment {ref}: No vendors with subaccounts. All funds go to admin wallet.")
-
         payload = {
             "email": user.email,
             "amount": amount_kobo,
@@ -956,10 +961,13 @@ def checkout_api(request):
             "callback_url": callback_url,
         }
 
-        # Only add split if we have vendor subaccounts to split to
+        # Only add split if we have subaccounts to split to
         if split:
             payload["split"] = split
-            logger.info(f"Payment {ref}: Using vendor subaccount split with {len(vendor_totals)} recipients")
+            recipient_count = len(split_subaccounts)
+            logger.info(f"Payment {ref}: Using split with {recipient_count} recipients (vendors + admin)")
+        else:
+            logger.info(f"Payment {ref}: No split configured. All funds go to main wallet.")
 
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
