@@ -22,6 +22,7 @@ from userprofile.models import UserProfile
 from .cart import Cart
 import uuid, requests
 from django.conf import settings
+from django.db import transaction
 from collections import defaultdict
 from django.urls import reverse
 import hmac, hashlib, logging, json
@@ -801,35 +802,17 @@ def checkout_api(request):
             item["product"].price * int(item["quantity"]) for item in cart
         )
 
-        # Create order using validated data instead of save(commit=False)
         ref = str(uuid.uuid4()).replace("-", "")[:20]
-
-        # Extract validated data
         validated_data = serializer.validated_data
 
         from store.models import Order
 
-        order = Order.objects.create(
-            created_by=user,
-            total_cost=total_price,
-            ref=ref,
-            first_name=validated_data.get("first_name"),
-            last_name=validated_data.get("last_name"),
-            phone=validated_data.get("phone"),
-            pickup_location=validated_data.get("pickup_location"),
-        )
-
-        for item in cart:
-            OrderItem.objects.create(
-                order=order,
-                product=item["product"],
-                quantity=item["quantity"],
-                price=item["product"].price * int(item["quantity"]),
-            )
-
-        # Calculate payment amounts
-        total_price_kobo = int(total_price * 100)
-        estimated_fee_kobo = int(min(0.015 * total_price * 100 + 10000, 200000))
+        # Calculate payment amounts before creating DB records
+        total_price_kobo = int(round(float(total_price) * 100))
+        # Paystack fee: 1.5% of (amount + fee) + ₦100 flat, cap ₦2000
+        # Solve: fee = 0.015*(total+fee) + 10000 → fee = (0.015*total + 10000) / 0.985
+        raw_fee = int(round((0.015 * total_price_kobo + 10000) / 0.985))
+        estimated_fee_kobo = min(raw_fee, 200000)
 
         # Total amount customer pays (includes platform fee)
         amount_kobo = total_price_kobo + estimated_fee_kobo
@@ -841,152 +824,75 @@ def checkout_api(request):
         for item in cart:
             product = item["product"]
             quantity = int(item["quantity"])
-            price_kobo = int(product.price * quantity * 100)
+            price_kobo = int(round(float(product.price) * quantity * 100))
 
             subaccount_code = product.vendor.subaccount_code
             if subaccount_code:
                 vendor_totals[subaccount_code] += price_kobo
             else:
-                # Products without vendor subaccount won't be included in split
-                # All their payments go to admin (main Paystack wallet)
                 products_without_subaccount.append(product.vendor.store_name)
-                # Don't add to vendor_totals - let it go to admin wallet
 
-        # Remove any subaccounts with 0 amount
         vendor_totals = {k: v for k, v in vendor_totals.items() if v > 0}
 
-        # ============== ADMIN SUBACCOUNT SETUP ==============
-        
-        # Get admin subaccount code
-        admin_subaccount = settings.ADMIN_SUBACCOUNT_CODE
-        if not admin_subaccount or not isinstance(admin_subaccount, str) or not admin_subaccount.strip():
+        # Validate admin subaccount config
+        admin_subaccount = getattr(settings, "ADMIN_SUBACCOUNT_CODE", None)
+        if admin_subaccount:
+            admin_subaccount = str(admin_subaccount).strip() or None
+        if admin_subaccount and not admin_subaccount.startswith("ACCT_"):
+            logger.error(f"Invalid admin subaccount format: {admin_subaccount}")
+            return Response({"detail": "Invalid admin subaccount format. Must start with 'ACCT_'"}, status=500)
+        if not admin_subaccount:
             logger.warning("ADMIN_SUBACCOUNT_CODE not configured. Platform fee will stay in main wallet.")
-            admin_subaccount = None
-        else:
-            admin_subaccount = admin_subaccount.strip()
-            # Validate format - Paystack subaccounts should start with ACCT_
-            if not admin_subaccount.startswith("ACCT_"):
-                logger.error(f"Invalid admin subaccount format: {admin_subaccount}. Must start with 'ACCT_'")
-                return Response(
-                    {"detail": f"Invalid admin subaccount format. Must start with 'ACCT_'"},
-                    status=500,
-                )
 
-        # ============== VENDOR SUBACCOUNT VALIDATION ==============
-        
-        # Validate all vendor subaccount codes (these MUST exist and be valid)
-        for subaccount_code, share in vendor_totals.items():
-            # Check format - Paystack subaccounts start with ACCT_
-            if not subaccount_code or not isinstance(subaccount_code, str):
-                logger.error(f"Invalid subaccount code: {subaccount_code}")
-                return Response(
-                    {"detail": f"Invalid subaccount code format: {subaccount_code}"},
-                    status=400,
-                )
-            
-            if not subaccount_code.startswith("ACCT_"):
-                logger.error(f"Invalid subaccount code format: {subaccount_code}. Must start with 'ACCT_'")
-                return Response(
-                    {"detail": f"Invalid subaccount code format: {subaccount_code}. Must start with 'ACCT_'"},
-                    status=400,
-                )
-            
-            # Check for negative amounts
-            if share < 0:
-                logger.error(f"Negative share amount for {subaccount_code}: {share}")
-                return Response(
-                    {"detail": f"Invalid share amount (negative) for subaccount {subaccount_code}"},
-                    status=400,
-                )
-            
-            # Check minimum non-zero share (at least 1 kobo)
-            if share == 0:
-                logger.error(f"Zero share amount for {subaccount_code}")
-                return Response(
-                    {"detail": f"Zero share amount for subaccount {subaccount_code}"},
-                    status=400,
-                )
-        
-        # Log split configuration for debugging
-        logger.info(f"Payment {ref}: Paystack split configuration:")
-        logger.info(f"  Total product amount from vendors with subaccounts: ₦{sum(vendor_totals.values())/100:,.2f}")
-        logger.info(f"  Platform fee (stays in main wallet): ₦{estimated_fee_kobo/100:,.2f}")
-        if admin_subaccount:
-            logger.info(f"  Admin subaccount (bearer): {admin_subaccount}")
-        if products_without_subaccount:
-            logger.info(f"  Products going to admin wallet (no vendor subaccount): {products_without_subaccount}")
-        
-        for subaccount_code, share in vendor_totals.items():
-            share_naira = share / 100  # Convert from kobo to naira
-            logger.info(f"    [{subaccount_code}]: ₦{share_naira:,.2f}")
-        
-        # Build split payload
-        # Calculate what admin should receive: platform fee + products without vendor subaccounts
+        # Validate vendor subaccount codes
+        for subaccount_code in vendor_totals:
+            if not isinstance(subaccount_code, str) or not subaccount_code.startswith("ACCT_"):
+                return Response({"detail": f"Invalid subaccount code format: {subaccount_code}"}, status=400)
+
+        # Build split
         admin_amount = estimated_fee_kobo + (total_price_kobo - sum(vendor_totals.values()))
-        logger.info(f"  Admin total (fee + unsplit products): ₦{admin_amount/100:,.2f}")
-        
-        split = None
         split_subaccounts = list(vendor_totals.items())
-        
         if admin_subaccount:
-            # Add admin subaccount with its total (fee + unsplit products)
             split_subaccounts.append((admin_subaccount, admin_amount))
-        
-        # Only create split if we have subaccounts to split to
+
+        split = None
         if split_subaccounts:
+            split_total = sum(share for _, share in split_subaccounts)
+            if split_total != amount_kobo:
+                logger.error(f"Payment {ref}: Split total {split_total} != amount {amount_kobo}")
+                return Response({"detail": f"Split mismatch: {split_total} vs {amount_kobo}"}, status=400)
+
             split = {
                 "type": "flat",
-                "subaccounts": [
-                    {"subaccount": sub, "share": share}
-                    for sub, share in split_subaccounts
-                ],
+                "bearer_type": "account",
+                "subaccounts": [{"subaccount": sub, "share": share} for sub, share in split_subaccounts],
             }
-            
-            # If admin subaccount is configured, set as bearer
             if admin_subaccount:
                 split["bearer_type"] = "subaccount"
                 split["bearer_subaccount"] = admin_subaccount
-                
-                # Verify split total equals amount being charged
-                split_total = sum(s["share"] for s in split["subaccounts"])
-                if split_total != amount_kobo:
-                    logger.error(f"Payment {ref}: Split total ({split_total}) != amount_kobo ({amount_kobo})")
-                    return Response(
-                        {"detail": f"Split configuration error. Total mismatch: {split_total} vs {amount_kobo}"},
-                        status=400,
-                    )
 
-        # Create payment record
-        payment = Payment.objects.create(
-            user=user, order=order, amount=total_price, ref=ref, status="pending"
+        logger.info(
+            f"Payment {ref}: amount=₦{amount_kobo/100:,.2f} vendors={dict(vendor_totals)} "
+            f"admin={admin_amount/100:,.2f} split={'yes' if split else 'no'}"
         )
+        if products_without_subaccount:
+            logger.info(f"Payment {ref}: products without vendor subaccount: {products_without_subaccount}")
 
-        protocol = "https" if request.is_secure() else "http"
-        # Redirect to frontend success page instead of backend callback
         callback_url = f"https://vendorxprt.com/success?reference={ref}&amount={total_price}&status=success"
-
         payload = {
             "email": user.email,
             "amount": amount_kobo,
-            "reference": payment.ref,
+            "reference": ref,
             "callback_url": callback_url,
         }
-
-        # Only add split if we have subaccounts to split to
         if split:
             payload["split"] = split
-            recipient_count = len(split_subaccounts)
-            logger.info(f"Payment {ref}: Using split with {recipient_count} recipients (vendors + admin)")
-        else:
-            logger.info(f"Payment {ref}: No split configured. All funds go to main wallet.")
 
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
             "Content-Type": "application/json",
         }
 
-        logger.info(f"Payment {ref}: Paystack initialization. Amount: ₦{amount_kobo/100:,.2f}")
-        
         response = requests.post(
             "https://api.paystack.co/transaction/initialize",
             json=payload,
@@ -995,35 +901,47 @@ def checkout_api(request):
 
         try:
             res_data = response.json()
-            payment.paystack_init_response = res_data
-            payment.save()
-        except ValueError as e:
+        except ValueError:
             logger.error(f"Payment {ref}: Paystack returned invalid JSON: {response.text}")
-            return Response(
-                {"detail": "Paystack returned an invalid response."}, status=502
+            return Response({"detail": "Paystack returned an invalid response."}, status=502)
+
+        if not (response.status_code == 200 and res_data.get("status")):
+            error_msg = res_data.get("message", "Unknown Paystack error")
+            logger.error(f"Payment {ref}: Paystack init failed. Status: {response.status_code}, Response: {res_data}")
+            return Response({"detail": error_msg, "paystack_status": response.status_code}, status=400)
+
+        # Only persist order + payment after Paystack confirms
+        with transaction.atomic():
+            order = Order.objects.create(
+                created_by=user,
+                total_cost=total_price,
+                ref=ref,
+                first_name=validated_data.get("first_name"),
+                last_name=validated_data.get("last_name"),
+                phone=validated_data.get("phone"),
+                pickup_location=validated_data.get("pickup_location"),
+            )
+            for item in cart:
+                OrderItem.objects.create(
+                    order=order,
+                    product=item["product"],
+                    quantity=item["quantity"],
+                    price=item["product"].price * int(item["quantity"]),
+                )
+            payment = Payment.objects.create(
+                user=user, order=order, amount=total_price, ref=ref,
+                status="pending", paystack_init_response=res_data,
             )
 
-        if response.status_code == 200 and res_data.get("status"):
-            logger.info(f"Payment {ref}: Successfully initialized with Paystack. Access code: {res_data['data'].get('access_code')}")
-            return Response(
-                {
-                    "authorization_url": res_data["data"]["authorization_url"],
-                    "access_code": res_data["data"]["access_code"],
-                    "reference": res_data["data"]["reference"],
-                },
-                status=200,
-            )
-        else:
-            error_msg = res_data.get("message", "Unknown Paystack error")
-            logger.error(f"Payment {ref}: Paystack initialization failed. Status: {response.status_code}, Response: {res_data}")
-            
-            return Response(
-                {
-                    "detail": error_msg,
-                    "paystack_status": response.status_code,
-                },
-                status=400,
-            )
+        logger.info(f"Payment {ref}: Paystack init success. Access code: {res_data['data'].get('access_code')}")
+        return Response(
+            {
+                "authorization_url": res_data["data"]["authorization_url"],
+                "access_code": res_data["data"]["access_code"],
+                "reference": res_data["data"]["reference"],
+            },
+            status=200,
+        )
 
     return Response(serializer.errors, status=400)
 
