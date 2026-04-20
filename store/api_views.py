@@ -934,7 +934,7 @@ def checkout_api(request):
                 )
             payment = Payment.objects.create(
                 user=user, order=order, amount=total_price, ref=ref,
-                status="pending", paystack_init_response=res_data,
+                status="pending", paystack_response=res_data,
             )
 
         logger.info(f"Payment {ref}: Paystack init success. Access code: {res_data['data'].get('access_code')}")
