@@ -61,8 +61,8 @@ class Product(models.Model):
     product_image = CloudinaryField(
         "image",
         folder="product_images",
-        blank=True,
-        null=True,
+        blank=False,
+        null=False,
         transformation={
             "width": 800,
             "height": 600,
@@ -136,7 +136,17 @@ class Product(models.Model):
         self.quantity += amount
         self.save()
 
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+
+        if not self.product_image:
+            raise ValidationError({"product_image": "Product image is required."})
+
     def save(self, *args, **kwargs):
+        self.full_clean()
+
         # Auto-generate unique slug from title if not provided
         if not self.slug and self.title:
             self.slug = self._generate_unique_slug()
