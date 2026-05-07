@@ -271,16 +271,26 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             return None
 
-        # Basic validation - you can expand this based on your requirements
-        phone_number = value.strip()
+        phone_str = str(value).strip().replace(" ", "").replace("-", "")
+
+        # Convert local Nigerian format (090xxxx...) to +234...
+        if phone_str.startswith("0") and len(phone_str) == 11:
+            phone_str = "+234" + phone_str[1:]
+
+        import re
+
+        if not re.match(r"^\+234[0-9]{10}$", phone_str):
+            raise serializers.ValidationError(
+                "Phone number must be in format +2349025144369 or 09025144369"
+            )
 
         # Check if phone number already exists for another vendor
-        if VendorProfile.objects.filter(phone_number=phone_number).exists():
+        if VendorProfile.objects.filter(phone_number=phone_str).exists():
             raise serializers.ValidationError(
                 "This phone number is already registered with another vendor"
             )
 
-        return phone_number
+        return phone_str
 
     def validate_whatsapp_number(self, value):
         """
@@ -289,16 +299,26 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             return None
 
-        # Basic validation - you can expand this based on your requirements
-        whatsapp_number = value.strip()
+        phone_str = str(value).strip().replace(" ", "").replace("-", "")
+
+        # Convert local Nigerian format (090xxxx...) to +234...
+        if phone_str.startswith("0") and len(phone_str) == 11:
+            phone_str = "+234" + phone_str[1:]
+
+        import re
+
+        if not re.match(r"^\+234[0-9]{10}$", phone_str):
+            raise serializers.ValidationError(
+                "This WhatsApp number must be in format +2349025144369 or 09025144369"
+            )
 
         # Check if WhatsApp number already exists for another vendor
-        if VendorProfile.objects.filter(whatsapp_number=whatsapp_number).exists():
+        if VendorProfile.objects.filter(whatsapp_number=phone_str).exists():
             raise serializers.ValidationError(
                 "This WhatsApp number is already registered with another vendor"
             )
 
-        return whatsapp_number
+        return phone_str
 
     def validate(self, data):
         """
