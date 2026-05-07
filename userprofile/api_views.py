@@ -1016,16 +1016,45 @@ def remove_profile_picture_api(request):
                 type=openapi.TYPE_OBJECT,
                 properties={
                     "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "user_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                    "email": openapi.Schema(type=openapi.TYPE_STRING),
+                    "is_vendor": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    "refresh": openapi.Schema(type=openapi.TYPE_STRING),
+                    "access": openapi.Schema(type=openapi.TYPE_STRING),
                     "vendor_id": openapi.Schema(type=openapi.TYPE_INTEGER),
                     "message": openapi.Schema(type=openapi.TYPE_STRING),
-                    "store_name": openapi.Schema(type=openapi.TYPE_STRING),
-                    "subscription_expiry": openapi.Schema(
-                        type=openapi.TYPE_STRING, format="date-time"
-                    ),
-                    "subscription_status": openapi.Schema(type=openapi.TYPE_STRING),
-                    "warning": openapi.Schema(
-                        type=openapi.TYPE_STRING,
-                        description="Warning message if payment setup is incomplete",
+                    "store_details": openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            "store_name": openapi.Schema(type=openapi.TYPE_STRING),
+                            "store_logo_url": openapi.Schema(
+                                type=openapi.TYPE_STRING, nullable=True
+                            ),
+                            "store_description": openapi.Schema(
+                                type=openapi.TYPE_STRING
+                            ),
+                            "phone_number": openapi.Schema(
+                                type=openapi.TYPE_STRING, nullable=True
+                            ),
+                            "whatsapp_number": openapi.Schema(
+                                type=openapi.TYPE_STRING, nullable=True
+                            ),
+                            "instagram_handle": openapi.Schema(
+                                type=openapi.TYPE_STRING
+                            ),
+                            "tiktok_handle": openapi.Schema(
+                                type=openapi.TYPE_STRING
+                            ),
+                            "is_verified": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                            "subscription_status": openapi.Schema(
+                                type=openapi.TYPE_STRING
+                            ),
+                            "subscription_expiry": openapi.Schema(
+                                type=openapi.TYPE_STRING,
+                                format="date-time",
+                                nullable=True,
+                            ),
+                        },
                     ),
                 },
             ),
@@ -1077,6 +1106,10 @@ def register_vendor_api(request):
     if serializer.is_valid():
         try:
             vendor = serializer.save()
+            from rest_framework_simplejwt.tokens import RefreshToken
+
+            refresh = RefreshToken.for_user(request.user)
+            access_token = refresh.access_token
 
             # Send vendor welcome email in the background
             try:
@@ -1092,20 +1125,33 @@ def register_vendor_api(request):
             # Prepare response data
             response_data = {
                 "success": True,
+                "user_id": request.user.id,
+                "email": request.user.email,
+                "is_vendor": True,
+                "refresh": str(refresh),
+                "access": str(access_token),
                 "vendor_id": vendor.id,
                 "message": f"Vendor account created successfully! {email_message}",
-                "store_name": vendor.store_name,
-                "store_logo_url": (
-                    vendor.store_logo.url
-                    if getattr(vendor, "store_logo", None)
-                    else None
-                ),
-                "subscription_expiry": (
-                    vendor.subscription_expiry.isoformat()
-                    if vendor.subscription_expiry
-                    else None
-                ),
-                "subscription_status": vendor.subscription_status,
+                "store_details": {
+                    "store_name": vendor.store_name,
+                    "store_logo_url": (
+                        vendor.store_logo.url if getattr(vendor, "store_logo", None) else None
+                    ),
+                    "store_description": vendor.store_description,
+                    "phone_number": str(vendor.phone_number) if vendor.phone_number else None,
+                    "whatsapp_number": (
+                        str(vendor.whatsapp_number) if vendor.whatsapp_number else None
+                    ),
+                    "instagram_handle": vendor.instagram_handle,
+                    "tiktok_handle": vendor.tiktok_handle,
+                    "is_verified": vendor.is_verified,
+                    "subscription_status": vendor.subscription_status,
+                    "subscription_expiry": (
+                        vendor.subscription_expiry.isoformat()
+                        if vendor.subscription_expiry
+                        else None
+                    ),
+                },
             }
 
             return Response(response_data, status=status.HTTP_201_CREATED)
