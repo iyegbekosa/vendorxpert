@@ -36,7 +36,7 @@ class OrderForm(forms.ModelForm):
 
         if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise forms.ValidationError(
-                "Phone must be in format +2349025144369 or 09025144369"
+                "Enter a valid 11-digit phone number."
             )
 
         return phone_str

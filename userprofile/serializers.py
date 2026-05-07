@@ -12,6 +12,7 @@ from django.core.files.base import ContentFile
 from urllib.parse import urlparse
 import os
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +282,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
         if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(
-                "Phone number must be in format +2349025144369 or 09025144369"
+                "Enter a valid 11-digit phone number."
             )
 
         # Check if phone number already exists for another vendor
@@ -309,7 +310,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
         if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(
-                "This WhatsApp number must be in format +2349025144369 or 09025144369"
+                "Enter a valid 11-digit WhatsApp number."
             )
 
         # Check if WhatsApp number already exists for another vendor
@@ -560,7 +561,7 @@ class VendorUpdateSerializer(serializers.ModelSerializer):
 
         if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(
-                "Phone number must be in format +2349025144369 or 09025144369"
+                "Enter a valid 11-digit phone number."
             )
 
         # Check for uniqueness - exclude current vendor if this is an update
@@ -592,7 +593,7 @@ class VendorUpdateSerializer(serializers.ModelSerializer):
 
         if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(
-                "WhatsApp number must be in format +2349025144369 or 09025144369"
+                "Enter a valid 11-digit WhatsApp number."
             )
 
         # Check for uniqueness - exclude current vendor if this is an update
@@ -610,24 +611,22 @@ class VendorUpdateSerializer(serializers.ModelSerializer):
     def save(self, **kwargs):
         """Convert phone numbers to PhoneNumber objects before saving"""
         # Convert validated phone numbers back to PhoneNumber objects
-        if (
-            "phone_number" in self.validated_data
-            and self.validated_data["phone_number"]
-        ):
+        validated_data: Any = self.validated_data
+        if validated_data is None:
+            validated_data = {}
+
+        if validated_data.get("phone_number"):
             from phonenumber_field.phonenumber import PhoneNumber
 
-            self.validated_data["phone_number"] = PhoneNumber.from_string(
-                self.validated_data["phone_number"], region="NG"
+            validated_data["phone_number"] = PhoneNumber.from_string(
+                validated_data["phone_number"], region="NG"
             )
 
-        if (
-            "whatsapp_number" in self.validated_data
-            and self.validated_data["whatsapp_number"]
-        ):
+        if validated_data.get("whatsapp_number"):
             from phonenumber_field.phonenumber import PhoneNumber
 
-            self.validated_data["whatsapp_number"] = PhoneNumber.from_string(
-                self.validated_data["whatsapp_number"], region="NG"
+            validated_data["whatsapp_number"] = PhoneNumber.from_string(
+                validated_data["whatsapp_number"], region="NG"
             )
 
         return super().save(**kwargs)
