@@ -78,6 +78,8 @@ class CartItemSerializer(serializers.Serializer):
 
 
 class CheckoutSerializer(serializers.ModelSerializer):
+    phone = serializers.CharField(required=True)
+
     class Meta:
         model = Order
         fields = ["first_name", "last_name", "phone", "pickup_location"]

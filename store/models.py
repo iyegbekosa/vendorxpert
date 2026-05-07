@@ -6,6 +6,7 @@ from PIL import Image
 from django.utils import timezone
 from django.urls import reverse
 from django.db.models import Avg
+from django.core.validators import MinValueValidator
 from phonenumber_field.modelfields import PhoneNumberField
 from django.conf import settings
 from django.utils.text import slugify
@@ -52,7 +53,9 @@ class Product(models.Model):
     title = models.CharField(max_length=50)
     slug = models.SlugField()
     description = models.TextField()
-    price = models.BigIntegerField()
+    price = models.BigIntegerField(
+        validators=[MinValueValidator(1, message="Enter a valid price greater than 0.")]
+    )
     created_at = models.DateTimeField(auto_now=True)
     updated_at = models.DateTimeField(auto_now=True)
     product_image = CloudinaryField(
