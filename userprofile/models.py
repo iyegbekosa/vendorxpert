@@ -228,15 +228,52 @@ class VendorProfile(models.Model):
     def __str__(self):
         return f"{self.store_name} (Vendor: {self.user.user_name})"
 
+    def has_active_trial(self):
+        """Return True when the vendor is inside a valid trial window."""
+        if not self.trial_end:
+            return self.subscription_status == "trial"
+
+        now = timezone.now()
+        if self.trial_start and now < self.trial_start:
+            return False
+
+        return now <= self.trial_end
+
+    def get_effective_subscription_status(self):
+        """Get the access status after reconciling trial and paid subscription fields."""
+        if self.subscription_status == "cancelled":
+            return "cancelled"
+
+        if self.has_active_trial():
+            return "trial"
+
+        if self.subscription_status == "paused":
+            return "paused"
+
+        if self.subscription_expiry:
+            now = timezone.now()
+            if self.subscription_status in ["active", "grace"]:
+                if now <= self.subscription_expiry:
+                    return "active"
+                if now <= self.subscription_expiry + timedelta(days=7):
+                    return "grace"
+                return "expired"
+
+        return self.subscription_status
+
+    def get_effective_subscription_expiry(self):
+        """Return the date currently controlling vendor access."""
+        if self.has_active_trial():
+            return self.trial_end
+        return self.subscription_expiry
+
     def is_subscription_active(self):
         """Check if subscription provides active access"""
         if self.subscription_status == "cancelled":
             return False
 
-        if self.subscription_status == "trial":
-            if self.trial_end:
-                return timezone.now() <= self.trial_end
-            return True  # Unlimited trial if no end date set
+        if self.has_active_trial():
+            return True
 
         if self.subscription_status == "paused":
             return True  # Paused subscriptions maintain access
@@ -253,14 +290,16 @@ class VendorProfile(models.Model):
 
     def get_subscription_days_remaining(self):
         """Get days remaining in subscription"""
-        if self.subscription_status == "trial" and self.trial_end:
-            return max(0, (self.trial_end - timezone.now()).days)
-        elif self.subscription_expiry:
-            return max(0, (self.subscription_expiry - timezone.now()).days)
+        expiry = self.get_effective_subscription_expiry()
+        if expiry:
+            return max(0, (expiry - timezone.now()).days)
         return 0
 
     def is_in_grace_period(self):
         """Check if subscription is in grace period"""
+        if self.has_active_trial():
+            return False
+
         if not self.subscription_expiry:
             return False
         now = timezone.now()

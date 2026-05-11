@@ -259,6 +259,67 @@ Recommended frontend flow:
 3. If refresh succeeds, update cookies and retry the protected request once.
 4. If refresh fails, clear cookies and redirect to login.
 
+## Vendor Feature Authorization
+
+Some authenticated vendor endpoints also require an active vendor subscription.
+
+Example:
+
+```http
+GET /api/vendor-kpis/
+Authorization: Bearer <access_token>
+```
+
+This endpoint requires:
+
+- A valid access token.
+- The authenticated user must have a vendor profile.
+- The vendor account must be verified unless the vendor is currently in a trial period.
+- The vendor subscription must be active, in trial, paused, or within the configured grace period.
+
+Important: the backend returns effective subscription fields for frontend decisions. A valid trial window can grant access even when old paid-subscription fields are stale.
+
+For example, a vendor with a valid trial should be treated as a trial user:
+
+```json
+{
+  "subscription_status": "trial",
+  "subscription_expiry": "2026-05-21T13:23:00+00:00",
+  "raw_subscription_status": "active",
+  "raw_subscription_expiry": "2025-08-21T06:16:28.133654+00:00",
+  "trial_start": "2026-05-07T13:23:00+00:00",
+  "trial_end": "2026-05-21T13:23:00+00:00"
+}
+```
+
+Use `subscription_status` and `subscription_expiry` for UI access decisions. The `raw_*` fields are included only for debugging/admin visibility.
+
+Possible authorization failures:
+
+```json
+{
+  "detail": "Vendor subscription has expired. Please renew to continue."
+}
+```
+
+```json
+{
+  "detail": "Vendor account is not verified."
+}
+```
+
+```json
+{
+  "detail": "User is not registered as a vendor."
+}
+```
+
+Frontend handling:
+
+- `401` means the access token is missing, invalid, or expired. Try refresh once.
+- `403` means the user is authenticated but not allowed to access that vendor feature.
+- For subscription-related `403` responses, route the user to renewal/resubscription instead of logging them out.
+
 ## Next.js Middleware Route Protection
 
 Middleware can read HttpOnly cookies because it runs server-side.

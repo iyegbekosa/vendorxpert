@@ -54,9 +54,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
                 "instagram_handle": vendor.instagram_handle,
                 "tiktok_handle": vendor.tiktok_handle,
                 "is_verified": vendor.is_verified,
-                "subscription_status": vendor.subscription_status,
+                "subscription_status": vendor.get_effective_subscription_status(),
                 "subscription_start": vendor.subscription_start,
-                "subscription_expiry": vendor.subscription_expiry,
+                "subscription_expiry": vendor.get_effective_subscription_expiry(),
+                "raw_subscription_status": vendor.subscription_status,
+                "raw_subscription_expiry": vendor.subscription_expiry,
+                "trial_start": vendor.trial_start,
+                "trial_end": vendor.trial_end,
             }
         return None
 

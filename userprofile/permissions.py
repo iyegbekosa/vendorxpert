@@ -6,19 +6,31 @@ from django.utils import timezone
 
 
 class HasActiveSubscription(BasePermission):
+    message = "Vendor subscription is not active."
 
     def has_permission(self, request, view):
         user = request.user
 
         # Ensure user is a vendor
         if not hasattr(user, "vendor_profile"):
+            self.message = "User is not registered as a vendor."
             return False
 
         vendor = user.vendor_profile
 
         # Use the vendor's own subscription check method which handles all cases
         # including trial periods, active subscriptions, and grace periods
-        return vendor.is_subscription_active()
+        if vendor.is_subscription_active():
+            return True
+
+        if vendor.subscription_status == "trial":
+            self.message = "Vendor trial has expired. Please subscribe to continue."
+            return False
+
+        if vendor.subscription_expiry:
+            self.message = "Vendor subscription has expired. Please renew to continue."
+
+        return False
 
 
 def can_create_product(user):
@@ -47,16 +59,31 @@ def can_create_product(user):
 
 
 class VendorFeatureAccess(BasePermission):
+    message = "Vendor feature access denied."
+
     def has_permission(self, request, view):
         vendor = getattr(request.user, "vendor_profile", None)
         if not vendor:
+            self.message = "User is not registered as a vendor."
             return False
 
-        # For trial periods, allow access without verification requirement
-        if vendor.subscription_status == "trial":
-            return vendor.is_subscription_active()
+        # Active trials are allowed even before paid-subscription verification.
+        if vendor.has_active_trial():
+            return True
 
         # For paid subscriptions, require verification
         if not vendor.is_verified:
+            self.message = "Vendor account is not verified."
             return False
-        return vendor.is_subscription_active()
+
+        if vendor.is_subscription_active():
+            return True
+
+        if vendor.subscription_status == "trial":
+            self.message = "Vendor trial has expired. Please subscribe to continue."
+        elif vendor.subscription_expiry:
+            self.message = "Vendor subscription has expired. Please renew to continue."
+        else:
+            self.message = "Vendor subscription is not active."
+
+        return False

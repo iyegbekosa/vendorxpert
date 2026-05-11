@@ -115,6 +115,23 @@ def _revoke_user_tokens_if_refresh_reused(refresh_token):
         _blacklist_all_refresh_tokens_for_user(user_id)
 
 
+def _isoformat_or_none(value):
+    return value.isoformat() if value else None
+
+
+def _vendor_subscription_payload(vendor):
+    return {
+        "subscription_status": vendor.get_effective_subscription_status(),
+        "subscription_expiry": _isoformat_or_none(
+            vendor.get_effective_subscription_expiry()
+        ),
+        "raw_subscription_status": vendor.subscription_status,
+        "raw_subscription_expiry": _isoformat_or_none(vendor.subscription_expiry),
+        "trial_start": _isoformat_or_none(vendor.trial_start),
+        "trial_end": _isoformat_or_none(vendor.trial_end),
+    }
+
+
 @swagger_auto_schema(
     method="post",
     operation_description="Register a new user account",
@@ -899,12 +916,7 @@ def login_api(request):
                 "instagram_handle": vendor.instagram_handle,
                 "tiktok_handle": vendor.tiktok_handle,
                 "is_verified": vendor.is_verified,
-                "subscription_status": vendor.subscription_status,
-                "subscription_expiry": (
-                    vendor.subscription_expiry.isoformat()
-                    if vendor.subscription_expiry
-                    else None
-                ),
+                **_vendor_subscription_payload(vendor),
             }
 
         return Response(response_data, status=status.HTTP_200_OK)
@@ -1322,12 +1334,7 @@ def register_vendor_api(request):
                     "instagram_handle": vendor.instagram_handle,
                     "tiktok_handle": vendor.tiktok_handle,
                     "is_verified": vendor.is_verified,
-                    "subscription_status": vendor.subscription_status,
-                    "subscription_expiry": (
-                        vendor.subscription_expiry.isoformat()
-                        if vendor.subscription_expiry
-                        else None
-                    ),
+                    **_vendor_subscription_payload(vendor),
                 },
             }
 
@@ -1600,12 +1607,7 @@ def my_store_api(request):
         "average_rating": round(average_rating, 1),
         "total_reviews": total_reviews,
         "product_count": product_count,
-        "subscription_status": vendor_profile.subscription_status,
-        "subscription_expiry": (
-            vendor_profile.subscription_expiry.isoformat()
-            if vendor_profile.subscription_expiry
-            else None
-        ),
+        **_vendor_subscription_payload(vendor_profile),
     }
 
     return Response(store_data, status=status.HTTP_200_OK)
@@ -1810,15 +1812,10 @@ def my_subscription_status_api(request):
     return Response(
         {
             "is_vendor": True,
-            "subscription_status": vendor.subscription_status,
+            **_vendor_subscription_payload(vendor),
             "subscription_start": (
                 vendor.subscription_start.isoformat()
                 if vendor.subscription_start
-                else None
-            ),
-            "subscription_expiry": (
-                vendor.subscription_expiry.isoformat()
-                if vendor.subscription_expiry
                 else None
             ),
             "is_active": is_active,
@@ -2711,17 +2708,17 @@ def vendor_kpis_api(request):
         }
 
     subscription_info = {
-        "status": vendor.subscription_status,
+        "status": vendor.get_effective_subscription_status(),
         "days_remaining": days_remaining,
         "is_in_grace_period": is_in_grace,
         "plan_name": vendor.plan.name if vendor.plan else None,
         "plan_price": float(vendor.plan.price) if vendor.plan else 0,
         "max_products": vendor.plan.max_products if vendor.plan else 0,
-        "expires_at": (
-            vendor.subscription_expiry.isoformat()
-            if vendor.subscription_expiry
-            else None
-        ),
+        "expires_at": _isoformat_or_none(vendor.get_effective_subscription_expiry()),
+        "raw_status": vendor.subscription_status,
+        "raw_expires_at": _isoformat_or_none(vendor.subscription_expiry),
+        "trial_start": _isoformat_or_none(vendor.trial_start),
+        "trial_end": _isoformat_or_none(vendor.trial_end),
         "last_payment": (
             vendor.last_payment_date.isoformat() if vendor.last_payment_date else None
         ),
