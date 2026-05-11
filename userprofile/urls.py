@@ -45,6 +45,18 @@ urlpatterns += [
     path(
         "api/reset-password/", api_views.reset_password_api, name="reset_password_api"
     ),
+    path(
+        "api/token/refresh",
+        api_views.refresh_token_api,
+        name="custom_token_refresh_api",
+    ),
+    path(
+        "api/token/refresh/",
+        api_views.refresh_token_api,
+        name="custom_token_refresh_api_slash",
+    ),
+    path("api/logout", api_views.logout_api, name="logout_api"),
+    path("api/logout/", api_views.logout_api, name="logout_api_slash"),
     path("api/login", api_views.login_api, name="login_api"),
     path("api/profile/", api_views.profile_api, name="profile_api"),
     path(

@@ -24,7 +24,7 @@ from .models import VendorProfile, VendorPlan
 from store.utils import create_paystack_subaccount
 from django.db import transaction
 from django.db.models import Count, Q
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from store.models import OrderItem, Order, Payment, Review
 from .views import get_object_or_404
@@ -53,6 +53,66 @@ from .email_utils import (
 from .models import EmailVerification, UserProfile
 from django.contrib.auth.hashers import make_password
 import random
+import jwt
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.settings import api_settings as jwt_api_settings
+from rest_framework_simplejwt.tokens import RefreshToken
+
+
+INVALID_REFRESH_TOKEN_DETAIL = {"detail": "Refresh token expired or invalid."}
+
+
+def _blacklist_all_refresh_tokens_for_user(user_id):
+    from rest_framework_simplejwt.token_blacklist.models import (
+        BlacklistedToken,
+        OutstandingToken,
+    )
+
+    for outstanding_token in OutstandingToken.objects.filter(user_id=user_id):
+        BlacklistedToken.objects.get_or_create(token=outstanding_token)
+
+
+def _decode_signed_refresh_payload(refresh_token):
+    options = {"verify_exp": False}
+    decode_kwargs = {
+        "algorithms": [jwt_api_settings.ALGORITHM],
+        "options": options,
+    }
+
+    if jwt_api_settings.AUDIENCE is not None:
+        decode_kwargs["audience"] = jwt_api_settings.AUDIENCE
+    else:
+        options["verify_aud"] = False
+
+    if jwt_api_settings.ISSUER is not None:
+        decode_kwargs["issuer"] = jwt_api_settings.ISSUER
+    else:
+        options["verify_iss"] = False
+
+    signing_key = (
+        getattr(jwt_api_settings, "VERIFYING_KEY", None) or jwt_api_settings.SIGNING_KEY
+    )
+    return jwt.decode(refresh_token, signing_key, **decode_kwargs)
+
+
+def _revoke_user_tokens_if_refresh_reused(refresh_token):
+    try:
+        payload = _decode_signed_refresh_payload(refresh_token)
+    except jwt.PyJWTError:
+        return
+
+    if payload.get(jwt_api_settings.TOKEN_TYPE_CLAIM) != "refresh":
+        return
+
+    jti = payload.get(jwt_api_settings.JTI_CLAIM)
+    user_id = payload.get(jwt_api_settings.USER_ID_CLAIM)
+    if not jti or not user_id:
+        return
+
+    from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+
+    if BlacklistedToken.objects.filter(token__jti=jti).exists():
+        _blacklist_all_refresh_tokens_for_user(user_id)
 
 
 @swagger_auto_schema(
@@ -624,6 +684,123 @@ def reset_password_api(request):
             "message": "Password has been reset successfully. You can now login with your new password.",
         },
         status=status.HTTP_200_OK,
+    )
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Rotate a refresh token and return a new access/refresh token pair",
+    security=[],
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["refresh_token"],
+        properties={
+            "refresh_token": openapi.Schema(
+                type=openapi.TYPE_STRING, description="Current refresh token"
+            ),
+        },
+    ),
+    responses={
+        200: openapi.Response(
+            description="Token refresh successful",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "access_token": openapi.Schema(type=openapi.TYPE_STRING),
+                    "refresh_token": openapi.Schema(type=openapi.TYPE_STRING),
+                },
+            ),
+        ),
+        401: openapi.Response(description="Refresh token expired or invalid"),
+    },
+    tags=["Authentication"],
+)
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def refresh_token_api(request):
+    refresh_token = request.data.get("refresh_token")
+    if not refresh_token:
+        return Response(
+            INVALID_REFRESH_TOKEN_DETAIL, status=status.HTTP_401_UNAUTHORIZED
+        )
+
+    try:
+        refresh = RefreshToken(refresh_token)
+        user_id = refresh.payload.get(jwt_api_settings.USER_ID_CLAIM)
+        if not user_id:
+            raise TokenError("Token contained no recognizable user identification")
+
+        user = UserProfile.objects.get(**{jwt_api_settings.USER_ID_FIELD: user_id})
+        if not jwt_api_settings.USER_AUTHENTICATION_RULE(user):
+            raise TokenError("User is inactive or deleted")
+
+        refresh.blacklist()
+        new_refresh = RefreshToken.for_user(user)
+
+        return Response(
+            {
+                "access_token": str(new_refresh.access_token),
+                "refresh_token": str(new_refresh),
+            },
+            status=status.HTTP_200_OK,
+        )
+    except UserProfile.DoesNotExist:
+        return Response(
+            INVALID_REFRESH_TOKEN_DETAIL, status=status.HTTP_401_UNAUTHORIZED
+        )
+    except TokenError:
+        _revoke_user_tokens_if_refresh_reused(refresh_token)
+        return Response(
+            INVALID_REFRESH_TOKEN_DETAIL, status=status.HTTP_401_UNAUTHORIZED
+        )
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_description="Revoke the authenticated user's refresh tokens",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["refresh_token"],
+        properties={
+            "refresh_token": openapi.Schema(
+                type=openapi.TYPE_STRING, description="Refresh token to revoke"
+            ),
+        },
+    ),
+    responses={
+        200: openapi.Response(description="Logged out successfully"),
+        401: openapi.Response(description="Authentication required or token invalid"),
+    },
+    tags=["Authentication"],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def logout_api(request):
+    refresh_token = request.data.get("refresh_token")
+    if not refresh_token:
+        return Response(
+            INVALID_REFRESH_TOKEN_DETAIL, status=status.HTTP_401_UNAUTHORIZED
+        )
+
+    try:
+        refresh = RefreshToken(refresh_token)
+    except TokenError:
+        return Response(
+            INVALID_REFRESH_TOKEN_DETAIL, status=status.HTTP_401_UNAUTHORIZED
+        )
+
+    token_user_id = refresh.payload.get(jwt_api_settings.USER_ID_CLAIM)
+    request_user_id = getattr(request.user, jwt_api_settings.USER_ID_FIELD)
+    if str(token_user_id) != str(request_user_id):
+        return Response(
+            INVALID_REFRESH_TOKEN_DETAIL, status=status.HTTP_401_UNAUTHORIZED
+        )
+
+    refresh.blacklist()
+    _blacklist_all_refresh_tokens_for_user(request_user_id)
+
+    return Response(
+        {"detail": "Logged out successfully."}, status=status.HTTP_200_OK
     )
 
 

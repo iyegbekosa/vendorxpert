@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     "django.contrib.humanize",
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
     "drf_yasg",
 ]
 
@@ -214,7 +215,7 @@ _patch_django_template_context_copy()
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -231,7 +232,10 @@ SIMPLE_JWT = {
 
 # CORS settings for frontend integration
 CORS_ALLOWED_ORIGINS = [
-    "http://vendorxprt.com",
+    "https://vendorxprt.com",
+    "https://www.vendorxprt.com",
+    "https://staging.vendorxprt.com",
+    "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://192.168.0.114:3000",
 ]
@@ -259,10 +263,6 @@ CORS_ALLOW_METHODS = [
     "POST",
     "PUT",
 ]
-
-# For development only - remove in production
-if DEBUG:
-    CORS_ALLOW_ALL_ORIGINS = True
 
 # Swagger settings for JWT authentication
 SWAGGER_SETTINGS = {
