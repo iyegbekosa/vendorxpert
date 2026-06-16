@@ -1496,14 +1496,12 @@ def vendor_kpis_api(request):
         average_rating=Avg("rating"), total_reviews=Count("id")
     )
 
-    # Rating breakdown
-    rating_breakdown = {
-        "5_star": all_reviews.filter(rating=5).count(),
-        "4_star": all_reviews.filter(rating=4).count(),
-        "3_star": all_reviews.filter(rating=3).count(),
-        "2_star": all_reviews.filter(rating=2).count(),
-        "1_star": all_reviews.filter(rating=1).count(),
+    # Rating breakdown — single GROUP BY query instead of 5 separate COUNTs
+    _counts = {
+        row["rating"]: row["count"]
+        for row in all_reviews.values("rating").annotate(count=Count("id"))
     }
+    rating_breakdown = {f"{n}_star": _counts.get(n, 0) for n in range(5, 0, -1)}
 
     # Sales Statistics
     vendor_order_items = OrderItem.objects.filter(

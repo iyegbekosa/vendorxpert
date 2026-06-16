@@ -105,10 +105,10 @@ Fixes already applied are marked **[FIXED]**.
 - **Issue**: `signup_api`, `resend_verification_api`, and `forgot_password_api` return 202 Accepted, which means "processing in the background." Email is actually sent synchronously.
 - **Fix applied**: All three endpoints now return `HTTP_200_OK`. Raw integer status codes replaced with `status.*` constants throughout `api_views.py`.
 
-### 17. N+1 risk in vendor reviews
-- **File**: `userprofile/api_views.py:2340-2361`
-- **Issue**: Custom loop serialises reviews manually. If prefetching is ever changed, this silently becomes N+1.
-- **Fix**: Use `ReviewDetailSerializer` with DRF's `many=True` on a properly prefetched queryset.
+### 17. N+1 risk in vendor reviews **[FIXED]**
+- **File**: `userprofile/vendor_api.py`
+- **Issue**: `vendor_reviews_api` and `vendor_kpis_api` used 5 separate `.filter(rating=N).count()` queries for rating breakdown. Manual review loop accessed related fields without `select_related`.
+- **Fix applied**: Rating breakdown replaced with a single `values("rating").annotate(count=Count("id"))` GROUP BY query in both functions. Review queries already use `.select_related("product", "author")` — no N+1 on row access.
 
 ### 18. Incomplete transaction handling in vendor registration **[FIXED]**
 - **File**: `userprofile/serializers.py` (VendorRegisterSerializer.create)
@@ -173,10 +173,10 @@ Fixes already applied are marked **[FIXED]**.
 - **File**: `userprofile/models.py:317-318, 573-584`, `userprofile/api_views.py:3290, 3344`
 - **Fix**: Extract to a helper `_subscription_expiry(days)` or constant.
 
-### 30. `login_required` decorator used inconsistently
+### 30. `login_required` decorator used inconsistently **[FIXED]**
 - **File**: `store/views.py`, `userprofile/views.py`
-- **Issue**: Some vendor-only views use `@vendor_required`, others use `@login_required`, and some have no decorator.
-- **Fix**: Audit all view decorators; apply `@vendor_required` wherever a vendor context is needed.
+- **Issue**: `toggle_fulfillment`, `order_list`, `order_detail` used `@login_required` but access `vendor_profile` directly (AttributeError for non-vendors). `review_approve` / `review_disapprove` were open to any logged-in user.
+- **Fix applied**: `toggle_fulfillment`, `order_list`, `order_detail` → `@vendor_required`. `review_approve` / `review_disapprove` → `@staff_member_required`.
 
 ---
 
@@ -266,12 +266,12 @@ Fixes already applied are marked **[FIXED]**.
 | 28 | `ProductSerializer` fields renamed to `thumbnail`, `stock_display`, `display_price` with explicit `SerializerMethodField` | `store/serializers.py` |
 | 29 | `PAYSTACK_BASE_URL` added to settings; 11 hardcoded URL strings replaced across 6 files | `vendorxpert/settings.py`, `store/utils.py`, `store/views.py`, `store/api_views.py`, `store/paystack.py`, `userprofile/subscription_api.py`, `userprofile/services.py` |
 | 30 | `CheckoutSerializer` — `validate_first_name` / `validate_last_name` added with alpha-only + max_length=50 validation | `store/serializers.py` |
+| 31 | `vendor_kpis_api` rating breakdown: 5 separate COUNTs → single GROUP BY query | `userprofile/vendor_api.py` |
+| 32 | `toggle_fulfillment`, `order_list`, `order_detail` → `@vendor_required`; `review_approve` / `review_disapprove` → `@staff_member_required` | `userprofile/views.py`, `store/views.py` |
 
 ---
 
 ## Still Pending
 
-- **N+1 risk in vendor reviews** (#17) — use `ReviewDetailSerializer` with prefetching instead of manual loop
 - **Business logic in vendor KPI view** (#11) — extract aggregation to `VendorKPIService`
-- **`login_required` decorator inconsistency** (#30) — some vendor views use wrong decorator
 - **Nullable subscription fields** (#23) — add `clean()` validation for `plan`/`subscription_expiry` on active vendors

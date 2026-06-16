@@ -271,7 +271,7 @@ def verify_signup(request):
 
 
 @require_POST
-@login_required
+@vendor_required
 def toggle_fulfillment(request, pk):
     order_item = get_object_or_404(
         OrderItem, pk=pk, product__vendor=request.user.vendor_profile
@@ -284,7 +284,7 @@ def toggle_fulfillment(request, pk):
     return redirect("my_orders")
 
 
-@login_required
+@vendor_required
 def order_list(request):
     vendor = request.user.vendor_profile
     order_items = OrderItem.objects.filter(product__vendor=vendor).select_related(
@@ -294,7 +294,7 @@ def order_list(request):
     return render(request, "userprofile/order_list.html", {"order_items": order_items})
 
 
-@login_required
+@vendor_required
 def order_detail(request, pk):
     order = get_object_or_404(Order, pk=pk)
 
