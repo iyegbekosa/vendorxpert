@@ -145,11 +145,11 @@ class Product(models.Model):
             raise ValidationError({"product_image": "Product image is required."})
 
     def save(self, *args, **kwargs):
-        self.full_clean()
-
-        # Auto-generate unique slug from title if not provided
+        # Generate slug before full_clean so the blank check passes.
         if not self.slug and self.title:
             self.slug = self._generate_unique_slug()
+
+        self.full_clean()
 
         # Auto-update stock status based on quantity
         if self.quantity > 0:
