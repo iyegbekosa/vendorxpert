@@ -362,7 +362,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
             "plan": default_plan,
             "subscription_status": "trial",
             "trial_start": timezone.now(),
-            "trial_end": timezone.now() + timedelta(days=14),
+            "trial_end": timezone.now() + timedelta(days=30),
             "is_verified": True,
             **validated_data,
         }

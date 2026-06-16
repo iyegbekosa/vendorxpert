@@ -1076,7 +1076,7 @@ def paystack_webhook_api(request):
 
     if not hmac.compare_digest(computed_hash, signature):
         logger.warning("Invalid Paystack signature")
-        return Response(status=401)
+        return Response(status=403)
 
     try:
         data = json.loads(payload.decode("utf-8"))

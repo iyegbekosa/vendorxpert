@@ -111,7 +111,7 @@ def delete_product(request, pk):
 
 
 def vendor_detail(request, pk):
-    user = VendorProfile.objects.get(pk=pk)
+    user = get_object_or_404(VendorProfile, pk=pk)
     product = Product.objects.filter(
         vendor=user, status=Product.ACTIVE, stock=Product.IN_STOCK
     )

@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes, throttle_classes
 from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import login
@@ -57,6 +57,7 @@ import jwt
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.settings import api_settings as jwt_api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
+from .throttles import SignupRateThrottle, LoginRateThrottle, PasswordResetRateThrottle
 
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,7 @@ def _vendor_subscription_payload(vendor):
     tags=["Authentication"],
 )
 @api_view(["POST"])
+@throttle_classes([SignupRateThrottle])
 def signup_api(request):
     """
     Register a new user account.
@@ -213,7 +215,7 @@ def signup_api(request):
                 "success": True,
                 "message": "Verification code sent to your email. Use it to complete registration.",
             },
-            status=status.HTTP_202_ACCEPTED,
+            status=status.HTTP_200_OK,
         )
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -387,7 +389,7 @@ def resend_verification_api(request):
             "success": True,
             "message": "Verification code has been resent to your email.",
         },
-        status=status.HTTP_202_ACCEPTED,
+        status=status.HTTP_200_OK,
     )
 
 
@@ -418,6 +420,7 @@ def resend_verification_api(request):
     tags=["Authentication"],
 )
 @api_view(["POST"])
+@throttle_classes([PasswordResetRateThrottle])
 def forgot_password_api(request):
     """
     Request a password reset code via email.
@@ -441,7 +444,7 @@ def forgot_password_api(request):
                 "success": True,
                 "message": "If an account with this email exists, a password reset code has been sent.",
             },
-            status=status.HTTP_202_ACCEPTED,
+            status=status.HTTP_200_OK,
         )
 
     # Generate 6-digit code
@@ -471,7 +474,7 @@ def forgot_password_api(request):
             "success": True,
             "message": "If an account with this email exists, a password reset code has been sent.",
         },
-        status=status.HTTP_202_ACCEPTED,
+        status=status.HTTP_200_OK,
     )
 
 
@@ -652,9 +655,9 @@ def reset_password_api(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Verify the reset token
+    # Verify the reset token using constant-time comparison to prevent timing attacks.
     stored_token = ev.payload.get("reset_token")
-    if not stored_token or stored_token != reset_token:
+    if not stored_token or not hmac.compare_digest(stored_token, reset_token):
         return Response(
             {"error": "Invalid or expired reset token"},
             status=status.HTTP_400_BAD_REQUEST,
@@ -865,6 +868,7 @@ def logout_api(request):
     tags=["Authentication"],
 )
 @api_view(["POST"])
+@throttle_classes([LoginRateThrottle])
 def login_api(request):
     """
     Login user with email and password.
@@ -3222,7 +3226,7 @@ def paystack_webhook(request):
 
     if not hmac.compare_digest(computed_hash, signature):
         logger.warning("Invalid Paystack signature")
-        return HttpResponse(status=401)
+        return HttpResponse(status=403)
 
     try:
         event_data = json.loads(payload.decode("utf-8"))

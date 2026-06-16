@@ -311,7 +311,7 @@ class VendorProfile(models.Model):
             and now <= self.subscription_expiry + timedelta(days=7)
         )
 
-    def start_trial(self, days=14):
+    def start_trial(self, days=30):
         """Start a trial period for the vendor"""
         self.subscription_status = "trial"
         self.trial_start = timezone.now()
