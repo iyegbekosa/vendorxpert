@@ -199,6 +199,22 @@ Note: `error` is now an **array of strings** on this endpoint (one message per f
 
 ---
 
+## 11. Product Object Field Renames (Breaking)
+
+The `ProductSerializer` response shape has changed. Three fields that previously exposed internal Django method names have been renamed to clean API-friendly names:
+
+| Old field name | New field name | Type |
+|----------------|----------------|------|
+| `get_thumbnail` | `thumbnail` | string (URL or null) |
+| `get_stock_display` | `stock_display` | string (`"in stock"` / `"out of stock"`) |
+| `display_price` | `display_price` | _(unchanged — already a clean name)_ |
+
+**Affected endpoints:** any endpoint that returns a product object — product listings, vendor store products, cart items, etc.
+
+**Action required:** Update all product rendering code to read `product.thumbnail` and `product.stock_display` instead of `product.get_thumbnail` and `product.get_stock_display`.
+
+---
+
 ## General Error Handling Reference
 
 ```

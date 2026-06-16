@@ -10,6 +10,9 @@ class CategorySerializer(serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
+    thumbnail = serializers.SerializerMethodField()
+    display_price = serializers.SerializerMethodField()
+    stock_display = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()
     vendor = serializers.SerializerMethodField()
 
@@ -21,16 +24,25 @@ class ProductSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "price",
-            "get_thumbnail",
+            "thumbnail",
             "slug",
             "category",
             "display_price",
-            "get_stock_display",
+            "stock_display",
             "average_rating",
             "featured",
             "vendor",
             "description",
         ]
+
+    def get_thumbnail(self, obj):
+        return obj.get_thumbnail()
+
+    def get_display_price(self, obj):
+        return obj.display_price()
+
+    def get_stock_display(self, obj):
+        return obj.get_stock_display()
 
     def get_average_rating(self, obj):
         return obj.average_rating()

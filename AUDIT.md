@@ -38,10 +38,10 @@ Fixes already applied are marked **[FIXED]**.
 - **Issue**: Unlimited attempts on signup, login, and password reset. Enables brute force and credential enumeration.
 - **Fix applied**: `userprofile/throttles.py` created with `SignupRateThrottle`, `LoginRateThrottle`, `PasswordResetRateThrottle` (all `AnonRateThrottle` subclasses). Rates configured in `settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]` (5/hr signup, 10/hr login, 5/hr password reset). `@throttle_classes` decorator applied to all three endpoints.
 
-### 4. Password reset token is not single-use
-- **File**: `userprofile/api_views.py:560-567`
-- **Issue**: The reset token is stored in `EmailVerification.payload` and the `is_used` flag is only set after a successful password change. If the link is intercepted, it can be replayed before the user acts on it.
-- **Fix**: Mark the token as used (or delete the record) immediately when the reset page is loaded, not only after the password is changed.
+### 4. Password reset token is not single-use **[FIXED]**
+- **File**: `userprofile/auth_api.py`
+- **Issue**: The reset token was stored in `EmailVerification.payload` and the `is_used` flag was only set after a successful password change. The OTP code itself could be replayed to obtain multiple reset tokens.
+- **Fix applied**: `verify_reset_code_api` now marks `is_used=True` immediately after OTP verification (prevents OTP replay). `reset_password_api` looks up the record by `is_used=True` and deletes it after successful password change (prevents reset_token replay).
 
 ### 5. Paystack webhook returns 401 instead of 403 on invalid signature **[FIXED]**
 - **File**: `userprofile/api_views.py:3208-3221`
@@ -67,10 +67,10 @@ Fixes already applied are marked **[FIXED]**.
 - **Issue**: Zero tests for payment logic, subscription workflows, webhooks, or any business logic.
 - **Fix applied**: 24 tests added — `PhoneUtilsTests` (8), `VendorRegistrationAPITests` (6), `ChangePlanServiceTests` (3) in `userprofile/tests.py`; `ProductSlugTests` (7) in `store/tests.py`. All passing.
 
-### 9. api_views.py is 3500+ lines
+### 9. api_views.py is 3500+ lines **[FIXED]**
 - **File**: `userprofile/api_views.py`
 - **Issue**: A single file containing auth, vendor management, product management, subscriptions, and webhooks is not maintainable or testable in isolation.
-- **Fix**: Split into `auth_views.py`, `vendor_views.py`, `subscription_views.py`, `webhook_views.py`.
+- **Fix applied**: Split into `auth_api.py` (auth/OTP/profile), `vendor_api.py` (vendor/product/orders/reviews/KPIs), `subscription_api.py` (resubscribe/cancel/pause/resume/change-plan/history), `webhook_api.py` (Paystack webhook handlers). `api_views.py` is now a 5-line re-export shim — `urls.py` required zero changes.
 
 ### 10. Business logic in VendorProfile model (fat model) **[FIXED]**
 - **File**: `userprofile/models.py:368-537`
@@ -149,10 +149,10 @@ Fixes already applied are marked **[FIXED]**.
 - **Issue**: 169-line method with 4+ levels of nesting makes logic hard to follow.
 - **Fix**: Extract into `_handle_upgrade`, `_handle_downgrade`, `_handle_renewal` private methods (part of service layer extraction).
 
-### 25. Product serializer leaks method names as field names
+### 25. Product serializer leaks method names as field names **[FIXED]**
 - **File**: `store/serializers.py:24, 28`
 - **Issue**: Fields named `get_thumbnail` and `get_stock_display` expose Django's method naming convention to API clients.
-- **Fix**: Use `SerializerMethodField` with `source` or rename via `to_representation`.
+- **Fix applied**: Explicit `SerializerMethodField` declarations added. Fields renamed to `thumbnail`, `stock_display`, and `display_price` (breaking change documented in `FRONTEND_CHANGES.md`).
 
 ### 26. Sensitive `subaccount_code` potentially exposed in public vendor endpoint
 - **File**: `userprofile/api_views.py:1346-1354`
@@ -215,10 +215,10 @@ Fixes already applied are marked **[FIXED]**.
 - **Issue**: `ref` is generated with `uuid.uuid4()` but collision handling is not present.
 - **Fix**: Add `unique=True` with a retry loop, or use `uuid4().hex` which is already UUID-collision-resistant (the existing `unique=True` DB constraint is enough — just verify it exists).
 
-### 38. Django admin not secured for production
+### 38. Django admin not secured for production **[FIXED]**
 - **File**: `vendorxpert/urls.py`
 - **Issue**: Admin is at the default `/admin/` path. Should be moved to a non-obvious path in production.
-- **Fix**: Change to `path("site-admin-xprt/", admin.site.urls)` or similar.
+- **Fix applied**: Changed to `path("xprt-admin/", admin.site.urls)`.
 
 ### 39. `CartItem.__str__` is overly complex **[FIXED]**
 - **File**: `store/models.py:289`
@@ -260,15 +260,18 @@ Fixes already applied are marked **[FIXED]**.
 | 22 | `vendor_detail` view uses `get_object_or_404` | `userprofile/views.py` |
 | 23 | `CartItem.__str__` simplified | `store/models.py` |
 | 24 | `except Exception: pass` on `login()` now logs; `json.JSONDecodeError`, `requests.RequestException`, `(IOError, UnicodeDecodeError)` catch specific errors | `userprofile/api_views.py`, `userprofile/serializers.py` |
+| 25 | `api_views.py` split into `auth_api.py`, `vendor_api.py`, `subscription_api.py`, `webhook_api.py`; shim re-exports all | `userprofile/` |
+| 26 | Password reset OTP now single-use (marked `is_used=True` on verify); reset_token deleted after use | `userprofile/auth_api.py` |
+| 27 | Admin URL moved from `/admin/` to `/xprt-admin/` | `vendorxpert/urls.py` |
+| 28 | `ProductSerializer` fields renamed to `thumbnail`, `stock_display`, `display_price` with explicit `SerializerMethodField` | `store/serializers.py` |
 
 ---
 
 ## Still Pending
 
-- **Split `userprofile/api_views.py`** (3500+ lines) into `auth_api.py`, `vendor_api.py`, `subscription_api.py`, `webhook_api.py`
-- **Fix HTTP status codes**: distinguish 403 from 404 on auth failures; 422 for unprocessable subscription state changes
-- **N+1 risk in vendor reviews** — use `ReviewDetailSerializer` with prefetching
-- **`_vendor_subscription_payload` helper** — replace inline duplicates at login response
-- **`validate_password()`** in password reset flow — use Django's built-in validator
-- **Admin URL** — move from `/admin/` to a non-obvious path
-- **Audit `vendor_detail_api`** — ensure `subaccount_code`/`bank_code` not exposed publicly
+- **N+1 risk in vendor reviews** (#17) — use `ReviewDetailSerializer` with prefetching instead of manual loop
+- **Paystack base URL constant** (#32) — define `PAYSTACK_BASE_URL` in settings; currently hardcoded in 3+ files
+- **Business logic in vendor KPI view** (#11) — extract aggregation to `VendorKPIService`
+- **Missing first/last name validation in CheckoutSerializer** (#28)
+- **`login_required` decorator inconsistency** (#30) — some vendor views use wrong decorator
+- **Nullable subscription fields** (#23) — add `clean()` validation for `plan`/`subscription_expiry` on active vendors
