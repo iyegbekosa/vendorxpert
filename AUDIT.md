@@ -164,10 +164,10 @@ Fixes already applied are marked **[FIXED]**.
 - **Issue**: Login failure after successful account creation is silently swallowed. User gets no feedback if auto-login fails.
 - **Fix**: Log the exception at minimum; surface a message to the user if login fails.
 
-### 28. Missing first/last name validation in CheckoutSerializer
+### 28. Missing first/last name validation in CheckoutSerializer **[FIXED]**
 - **File**: `store/serializers.py:80-92`
 - **Issue**: `first_name` and `last_name` come from the `Order` model but have no explicit length or character validation in the serializer.
-- **Fix**: Add `validate_first_name` / `validate_last_name` or explicit field declarations with constraints.
+- **Fix applied**: Added `validate_first_name` and `validate_last_name` methods — strip whitespace, reject blank, reject non-alpha characters (hyphens and internal spaces allowed). `max_length=50` enforced.
 
 ### 29. Repeated `timezone.now() + timedelta(days=X)` pattern
 - **File**: `userprofile/models.py:317-318, 573-584`, `userprofile/api_views.py:3290, 3344`
@@ -186,9 +186,9 @@ Fixes already applied are marked **[FIXED]**.
 - **Files**: `userprofile/models.py:368` (`change_plan_with_payment`), `userprofile/api_views.py:3253` (`handle_successful_payment`)
 - **Fix**: Add a one-paragraph docstring describing the flow and key side effects.
 
-### 32. Paystack base URL hardcoded in multiple files
-- **Files**: `userprofile/api_views.py`, `userprofile/models.py`, `store/utils.py`
-- **Fix**: Define `PAYSTACK_BASE_URL = "https://api.paystack.co"` in settings and import it.
+### 32. Paystack base URL hardcoded in multiple files **[FIXED]**
+- **Files**: `store/utils.py`, `store/views.py`, `store/api_views.py`, `store/paystack.py`, `userprofile/subscription_api.py`, `userprofile/services.py`
+- **Fix applied**: `PAYSTACK_BASE_URL = "https://api.paystack.co"` added to `vendorxpert/settings.py`. All 11 hardcoded URL strings replaced with `f"{settings.PAYSTACK_BASE_URL}/..."`. `userprofile/services.py` now references `settings.PAYSTACK_BASE_URL` instead of its own copy.
 
 ### 33. Password reset minimum length inconsistency
 - **File**: `userprofile/api_views.py:632`
@@ -264,14 +264,14 @@ Fixes already applied are marked **[FIXED]**.
 | 26 | Password reset OTP now single-use (marked `is_used=True` on verify); reset_token deleted after use | `userprofile/auth_api.py` |
 | 27 | Admin URL moved from `/admin/` to `/xprt-admin/` | `vendorxpert/urls.py` |
 | 28 | `ProductSerializer` fields renamed to `thumbnail`, `stock_display`, `display_price` with explicit `SerializerMethodField` | `store/serializers.py` |
+| 29 | `PAYSTACK_BASE_URL` added to settings; 11 hardcoded URL strings replaced across 6 files | `vendorxpert/settings.py`, `store/utils.py`, `store/views.py`, `store/api_views.py`, `store/paystack.py`, `userprofile/subscription_api.py`, `userprofile/services.py` |
+| 30 | `CheckoutSerializer` — `validate_first_name` / `validate_last_name` added with alpha-only + max_length=50 validation | `store/serializers.py` |
 
 ---
 
 ## Still Pending
 
 - **N+1 risk in vendor reviews** (#17) — use `ReviewDetailSerializer` with prefetching instead of manual loop
-- **Paystack base URL constant** (#32) — define `PAYSTACK_BASE_URL` in settings; currently hardcoded in 3+ files
 - **Business logic in vendor KPI view** (#11) — extract aggregation to `VendorKPIService`
-- **Missing first/last name validation in CheckoutSerializer** (#28)
 - **`login_required` decorator inconsistency** (#30) — some vendor views use wrong decorator
 - **Nullable subscription fields** (#23) — add `clean()` validation for `plan`/`subscription_expiry` on active vendors

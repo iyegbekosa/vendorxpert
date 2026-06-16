@@ -92,10 +92,28 @@ class CartItemSerializer(serializers.Serializer):
 
 class CheckoutSerializer(serializers.ModelSerializer):
     phone = serializers.CharField(required=True)
+    first_name = serializers.CharField(required=True, max_length=50)
+    last_name = serializers.CharField(required=True, max_length=50)
 
     class Meta:
         model = Order
         fields = ["first_name", "last_name", "phone", "pickup_location"]
+
+    def validate_first_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("First name is required.")
+        if not value.replace("-", "").replace(" ", "").isalpha():
+            raise serializers.ValidationError("First name may only contain letters, spaces, and hyphens.")
+        return value
+
+    def validate_last_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Last name is required.")
+        if not value.replace("-", "").replace(" ", "").isalpha():
+            raise serializers.ValidationError("Last name may only contain letters, spaces, and hyphens.")
+        return value
 
     def validate_phone(self, value):
         if not value or not str(value).strip():

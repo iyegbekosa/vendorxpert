@@ -890,7 +890,7 @@ def checkout_api(request):
         logger.info(f"Payment {ref}: Sending payload to Paystack: {payload}")
 
         response = requests.post(
-            "https://api.paystack.co/transaction/initialize",
+            f"{settings.PAYSTACK_BASE_URL}/transaction/initialize",
             json=payload,
             headers=headers,
         )
@@ -985,7 +985,7 @@ def paystack_callback_api(request):
     if not ref:
         return Response({"detail": "No transaction reference provided"}, status=400)
 
-    url = f"https://api.paystack.co/transaction/verify/{ref}"
+    url = f"{settings.PAYSTACK_BASE_URL}/transaction/verify/{ref}"
     headers = {"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"}
 
     try:
@@ -1397,7 +1397,7 @@ def verify_payment_api(request):
         return Response({"success": False, "message": "Payment not found"}, status=404)
 
     # Verify with Paystack
-    url = f"https://api.paystack.co/transaction/verify/{reference}"
+    url = f"{settings.PAYSTACK_BASE_URL}/transaction/verify/{reference}"
     headers = {"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"}
 
     try:
@@ -1679,7 +1679,7 @@ def get_banks_api(request):
     No authentication required.
     """
     try:
-        url = "https://api.paystack.co/bank"
+        url = f"{settings.PAYSTACK_BASE_URL}/bank"
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
             "Content-Type": "application/json",
@@ -1797,7 +1797,7 @@ def verify_account_api(request):
         )
 
     try:
-        url = "https://api.paystack.co/bank/resolve"
+        url = f"{settings.PAYSTACK_BASE_URL}/bank/resolve"
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
             "Content-Type": "application/json",

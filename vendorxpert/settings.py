@@ -181,6 +181,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "userprofile.UserProfile"
 
 PAYSTACK_SECRET_KEY = config("PAYSTACK_SECRET_KEY")
+PAYSTACK_BASE_URL = "https://api.paystack.co"
 
 ADMIN_SUBACCOUNT_CODE = config("ADMIN_SUBACCOUNT_CODE")
 

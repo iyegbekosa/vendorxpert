@@ -238,7 +238,7 @@ def checkout(request):
             }
 
             response = requests.post(
-                "https://api.paystack.co/transaction/initialize",
+                f"{settings.PAYSTACK_BASE_URL}/transaction/initialize",
                 json=payload,
                 headers=headers,
             )
@@ -273,7 +273,7 @@ def paystack_callback(request):
     if not ref:
         return HttpResponse("No transaction reference provided", status=400)
 
-    url = f"https://api.paystack.co/transaction/verify/{ref}"
+    url = f"{settings.PAYSTACK_BASE_URL}/transaction/verify/{ref}"
     headers = {"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"}
 
     try:

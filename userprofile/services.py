@@ -14,7 +14,7 @@ from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
-PAYSTACK_BASE_URL = "https://api.paystack.co"
+PAYSTACK_BASE_URL = settings.PAYSTACK_BASE_URL
 _PAYSTACK_HEADERS = lambda: {
     "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
     "Content-Type": "application/json",

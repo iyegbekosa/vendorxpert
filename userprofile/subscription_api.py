@@ -129,7 +129,7 @@ def resubscribe_api(request):
     }
 
     response = requests.post(
-        "https://api.paystack.co/transaction/initialize", json=payload, headers=headers
+        f"{settings.PAYSTACK_BASE_URL}/transaction/initialize", json=payload, headers=headers
     )
 
     try:
@@ -202,7 +202,7 @@ def cancel_subscription_api(request):
 
     subscription_code = getattr(vendor, "paystack_subscription_code", None)
     if subscription_code:
-        url = f"https://api.paystack.co/subscription/disable"
+        url = f"{settings.PAYSTACK_BASE_URL}/subscription/disable"
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
             "Content-Type": "application/json",

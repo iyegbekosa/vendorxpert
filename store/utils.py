@@ -7,7 +7,7 @@ class PaystackError(Exception):
 
 
 def create_paystack_subaccount(vendor, account_number, bank_code):
-    url = "https://api.paystack.co/subaccount"
+    url = f"{settings.PAYSTACK_BASE_URL}/subaccount"
     headers = {
         "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
         "Content-Type": "application/json",
@@ -56,7 +56,7 @@ def validate_paystack_subaccount(subaccount_code):
     """
     Validate if a Paystack subaccount is still active and properly configured.
     """
-    url = f"https://api.paystack.co/subaccount/{subaccount_code}"
+    url = f"{settings.PAYSTACK_BASE_URL}/subaccount/{subaccount_code}"
     headers = {
         "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
         "Content-Type": "application/json",
