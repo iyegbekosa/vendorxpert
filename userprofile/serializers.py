@@ -289,8 +289,11 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                 "Enter a valid 11-digit phone number."
             )
 
-        # Check if phone number already exists for another vendor
-        if VendorProfile.objects.filter(phone_number=phone_str).exists():
+        # Exclude incomplete vendor profiles (no subaccount) from uniqueness check
+        # so orphaned rows from a previous failed registration don't block retries.
+        if VendorProfile.objects.filter(phone_number=phone_str).exclude(
+            subaccount_code__isnull=True
+        ).exclude(subaccount_code="").exists():
             raise serializers.ValidationError(
                 "This phone number is already registered with another vendor"
             )
@@ -317,8 +320,10 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                 "Enter a valid 11-digit WhatsApp number."
             )
 
-        # Check if WhatsApp number already exists for another vendor
-        if VendorProfile.objects.filter(whatsapp_number=phone_str).exists():
+        # Exclude incomplete vendor profiles (no subaccount) from uniqueness check.
+        if VendorProfile.objects.filter(whatsapp_number=phone_str).exclude(
+            subaccount_code__isnull=True
+        ).exclude(subaccount_code="").exists():
             raise serializers.ValidationError(
                 "This WhatsApp number is already registered with another vendor"
             )
@@ -338,66 +343,80 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        from django.db import transaction as db_transaction
         request = self.context["request"]
-        # Extract and remove fields we will handle manually
         account_number = validated_data.pop("account_number")
         bank_code = validated_data.pop("bank_code")
         store_logo_url = validated_data.pop("store_logo", None)
 
-        # Check if an uploaded file was provided (multipart/form-data)
         file_logo = None
         if hasattr(request, "FILES") and request.FILES.get("store_logo"):
             file_logo = request.FILES.get("store_logo")
 
-        # Handle phone numbers - only set if provided and not empty
         phone_number = validated_data.pop("phone_number", None)
         whatsapp_number = validated_data.pop("whatsapp_number", None)
 
-        # Clean empty strings to None
         if phone_number == "" or (phone_number and not phone_number.strip()):
             phone_number = None
         if whatsapp_number == "" or (whatsapp_number and not whatsapp_number.strip()):
             whatsapp_number = None
 
+        # Validate logo file BEFORE touching the database so failures here
+        # never leave an orphaned VendorProfile behind.
+        valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg"]
+        if file_logo:
+            max_size = 5 * 1024 * 1024
+            if hasattr(file_logo, "size") and file_logo.size > max_size:
+                raise serializers.ValidationError(
+                    {"store_logo": ["File size cannot exceed 5MB."]}
+                )
+
+            name = getattr(file_logo, "name", "store_logo")
+            ext = os.path.splitext(name)[1].lower()
+            if ext == "" and hasattr(file_logo, "content_type"):
+                if file_logo.content_type == "image/svg+xml":
+                    ext = ".svg"
+
+            if ext not in valid_extensions:
+                raise serializers.ValidationError(
+                    {
+                        "store_logo": [
+                            f"Unsupported file type '{ext}'. Supported: {', '.join(valid_extensions)}"
+                        ]
+                    }
+                )
+
         try:
-            # Step 1: Get or create a default plan for new vendors
-            default_plan = None
-            try:
-                default_plan = VendorPlan.objects.get(
-                    name=VendorPlan.BASIC, is_active=True
-                )
-            except VendorPlan.DoesNotExist:
-                # If no basic plan exists, create one or use any active plan
-                default_plan = VendorPlan.objects.filter(is_active=True).first()
+            default_plan = VendorPlan.objects.get(name=VendorPlan.BASIC, is_active=True)
+        except VendorPlan.DoesNotExist:
+            default_plan = VendorPlan.objects.filter(is_active=True).first()
 
-            # Step 2: Create the vendor profile with trial period
-            vendor_data = {
-                "user": request.user,
-                "plan": default_plan,
-                "subscription_status": "trial",  # Start with trial
-                "trial_start": timezone.now(),
-                "trial_end": timezone.now() + timedelta(days=14),  # 14-day trial
-                "is_verified": True,  # Auto-verify new vendors for now
-                **validated_data,
-            }
+        vendor_data = {
+            "user": request.user,
+            "plan": default_plan,
+            "subscription_status": "trial",
+            "trial_start": timezone.now(),
+            "trial_end": timezone.now() + timedelta(days=14),
+            "is_verified": True,
+            **validated_data,
+        }
 
-            # Set default store description if not provided
-            if not validated_data.get("store_description"):
-                vendor_data["store_description"] = (
-                    f"Welcome to {validated_data.get('store_name', 'our store')}! We offer quality products and excellent service."
-                )
+        if not validated_data.get("store_description"):
+            vendor_data["store_description"] = (
+                f"Welcome to {validated_data.get('store_name', 'our store')}! We offer quality products and excellent service."
+            )
 
-            # Only set phone numbers if provided, otherwise they will remain NULL
-            if phone_number:
-                vendor_data["phone_number"] = phone_number
-            if whatsapp_number:
-                vendor_data["whatsapp_number"] = whatsapp_number
+        if phone_number:
+            vendor_data["phone_number"] = phone_number
+        if whatsapp_number:
+            vendor_data["whatsapp_number"] = whatsapp_number
 
+        # All DB writes in one atomic block. Any failure here rolls back
+        # everything cleanly — no orphaned rows.
+        with db_transaction.atomic():
             vendor = VendorProfile.objects.create(**vendor_data)
 
-            # Log trial creation
             from .models import SubscriptionHistory
-
             SubscriptionHistory.log_event(
                 vendor=vendor,
                 event_type="trial_started",
@@ -405,37 +424,9 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                 notes="14-day trial period started on vendor registration",
             )
 
-            # If a file was uploaded, validate and save it. Otherwise, try the URL path.
             if file_logo:
-                # Basic validation: size and extension
-                max_size = 5 * 1024 * 1024
-                if hasattr(file_logo, "size") and file_logo.size > max_size:
-                    raise serializers.ValidationError(
-                        {"store_logo": ["File size cannot exceed 5MB."]}
-                    )
-
-                valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg"]
-                name = getattr(file_logo, "name", "store_logo")
-                ext = os.path.splitext(name)[1].lower()
-                if ext == "" and hasattr(file_logo, "content_type"):
-                    # attempt to infer extension from content_type (very basic)
-                    if file_logo.content_type == "image/svg+xml":
-                        ext = ".svg"
-
-                if ext not in valid_extensions:
-                    raise serializers.ValidationError(
-                        {
-                            "store_logo": [
-                                f"Unsupported file type '{ext}'. Supported: {', '.join(valid_extensions)}"
-                            ]
-                        }
-                    )
-
-                # Save uploaded file to ImageField
-                # Use the field's save method correctly for CloudinaryField
                 vendor.store_logo = file_logo
                 vendor.save()
-
             elif store_logo_url:
                 try:
                     resp = requests.get(store_logo_url, timeout=6)
@@ -445,57 +436,44 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                             os.path.basename(parsed.path)
                             or f"store_logo_{vendor.pk}.png"
                         )
-                        # Ensure filename has an extension
                         if not os.path.splitext(filename)[1]:
                             filename = f"{filename}.png"
-
-                        # Assign the file content to CloudinaryField
                         vendor.store_logo.save(
                             filename, ContentFile(resp.content), save=False
                         )
                         vendor.save()
                     else:
-                        print(
+                        logger.warning(
                             f"[userprofile] Failed to fetch store_logo from {store_logo_url}: HTTP {resp.status_code}"
                         )
                 except Exception as logo_exc:
-                    print(
+                    logger.warning(
                         f"[userprofile] Error fetching store_logo from {store_logo_url}: {logo_exc}"
                     )
 
-            # Step 3: Mark the user as a vendor
             request.user.is_vendor = True
             request.user.save()
 
-            # Step 4: Create Paystack subaccount - THIS IS MANDATORY
-            try:
-                create_paystack_subaccount(vendor, account_number, bank_code)
-                logger.info(f"✅ Paystack subaccount created for vendor {vendor.pk} ({vendor.store_name})")
-            except Exception as paystack_error:
-                # CRITICAL: Paystack subaccount is required for payment splitting
-                # Delete the vendor and revert user.is_vendor flag
-                error_msg = str(paystack_error)
-                logger.error(
-                    f"❌ BLOCKING: Paystack subaccount creation failed for {vendor.store_name}: {error_msg}"
-                )
-                
-                # Cleanup: Remove vendor and revert vendor status
-                vendor.delete()
-                request.user.is_vendor = False
-                request.user.save()
-                
-                # Raise validation error with clear message to user
-                raise serializers.ValidationError(
-                    f"Payment system setup failed: {error_msg}. "
-                    f"Please verify your bank details (account number and bank code) and try again."
-                )
-            return vendor
-
-        except Exception as e:
-            # If vendor creation fails, nothing to clean up
-            raise serializers.ValidationError(
-                f"Failed to create vendor account: {str(e)}"
+        # Paystack is an external API call — keep it outside the atomic block
+        # so we don't hold a DB connection open during the HTTP round-trip.
+        try:
+            create_paystack_subaccount(vendor, account_number, bank_code)
+            logger.info(f"Paystack subaccount created for vendor {vendor.pk} ({vendor.store_name})")
+        except Exception as paystack_error:
+            error_msg = str(paystack_error)
+            logger.error(
+                f"Paystack subaccount creation failed for {vendor.store_name}: {error_msg}"
             )
+            # The atomic block already committed, so clean up manually.
+            vendor.delete()
+            request.user.is_vendor = False
+            request.user.save()
+            raise serializers.ValidationError(
+                f"Payment system setup failed: {error_msg}. "
+                f"Please verify your bank details (account number and bank code) and try again."
+            )
+
+        return vendor
 
 
 class VendorProfileSerializer(serializers.ModelSerializer):

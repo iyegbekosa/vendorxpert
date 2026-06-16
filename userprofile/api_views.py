@@ -1273,7 +1273,6 @@ def remove_profile_picture_api(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 @parser_classes([MultiPartParser, FormParser, JSONParser])
-@transaction.atomic
 def register_vendor_api(request):
     """
     Register the authenticated user as a vendor.
@@ -1281,78 +1280,86 @@ def register_vendor_api(request):
     Requires authentication. Creates a vendor profile for the current user
     with store details and bank account information for payment processing.
     """
-    # Check if user is already a vendor
     if hasattr(request.user, "vendor_profile"):
-        return Response(
-            {"error": "User is already registered as a vendor"},
-            status=status.HTTP_400_BAD_REQUEST,
+        vendor = request.user.vendor_profile
+        if vendor.subaccount_code:
+            # Fully registered vendor with a working Paystack subaccount.
+            return Response(
+                {"error": "User is already registered as a vendor"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Incomplete registration (Paystack setup previously failed and cleanup
+        # didn't finish). Clear the orphaned profile so the user can retry.
+        logger.info(
+            f"Cleaning up incomplete vendor profile {vendor.pk} for user {request.user.id} before retry."
         )
+        vendor.delete()
+        request.user.is_vendor = False
+        request.user.save()
 
     serializer = VendorRegisterSerializer(
         data=request.data, context={"request": request}
     )
 
     if serializer.is_valid():
+        from rest_framework.exceptions import ValidationError as DRFValidationError
         try:
             vendor = serializer.save()
-            from rest_framework_simplejwt.tokens import RefreshToken
-
-            refresh = RefreshToken.for_user(request.user)
-            access_token = refresh.access_token
-
-            # Send vendor welcome email in the background
-            try:
-                send_vendor_welcome_email(vendor)
-                email_message = "Vendor welcome email sent successfully!"
-            except Exception as e:
-                # Log the error but don't fail the registration
-                logger.error(
-                    f"Failed to send vendor welcome email to {vendor.user.email}: {str(e)}"
-                )
-                email_message = "Vendor account created successfully (welcome email failed to send)."
-
-            # Prepare response data
-            response_data = {
-                "success": True,
-                "user_id": request.user.id,
-                "email": request.user.email,
-                "is_vendor": True,
-                "refresh": str(refresh),
-                "access": str(access_token),
-                "vendor_id": vendor.id,
-                "message": f"Vendor account created successfully! {email_message}",
-                "store_details": {
-                    "store_name": vendor.store_name,
-                    "store_logo_url": (
-                        vendor.store_logo.url if getattr(vendor, "store_logo", None) else None
-                    ),
-                    "store_description": vendor.store_description,
-                    "phone_number": str(vendor.phone_number) if vendor.phone_number else None,
-                    "whatsapp_number": (
-                        str(vendor.whatsapp_number) if vendor.whatsapp_number else None
-                    ),
-                    "instagram_handle": vendor.instagram_handle,
-                    "tiktok_handle": vendor.tiktok_handle,
-                    "is_verified": vendor.is_verified,
-                    **_vendor_subscription_payload(vendor),
-                },
-            }
-
-            return Response(response_data, status=status.HTTP_201_CREATED)
-
+        except DRFValidationError as e:
+            return Response(
+                {"error": e.detail},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as e:
-            # Log the error
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.error(
                 f"Vendor registration failed for user {request.user.id}: {str(e)}"
             )
-
             return Response(
                 {"error": "Failed to create vendor account. Please try again."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        refresh = RefreshToken.for_user(request.user)
+        access_token = refresh.access_token
+
+        try:
+            send_vendor_welcome_email(vendor)
+            email_message = "Vendor welcome email sent successfully!"
+        except Exception as e:
+            logger.error(
+                f"Failed to send vendor welcome email to {vendor.user.email}: {str(e)}"
+            )
+            email_message = "Vendor account created successfully (welcome email failed to send)."
+
+        response_data = {
+            "success": True,
+            "user_id": request.user.id,
+            "email": request.user.email,
+            "is_vendor": True,
+            "refresh": str(refresh),
+            "access": str(access_token),
+            "vendor_id": vendor.id,
+            "message": f"Vendor account created successfully! {email_message}",
+            "store_details": {
+                "store_name": vendor.store_name,
+                "store_logo_url": (
+                    vendor.store_logo.url if getattr(vendor, "store_logo", None) else None
+                ),
+                "store_description": vendor.store_description,
+                "phone_number": str(vendor.phone_number) if vendor.phone_number else None,
+                "whatsapp_number": (
+                    str(vendor.whatsapp_number) if vendor.whatsapp_number else None
+                ),
+                "instagram_handle": vendor.instagram_handle,
+                "tiktok_handle": vendor.tiktok_handle,
+                "is_verified": vendor.is_verified,
+                **_vendor_subscription_payload(vendor),
+            },
+        }
+
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
