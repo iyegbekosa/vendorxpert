@@ -170,15 +170,45 @@ No frontend change required — just confirming the data contract.
 
 ---
 
+## 9. Subscription State Errors — 422 not 400 (Breaking)
+
+The following endpoints now return `422 Unprocessable Entity` instead of `400 Bad Request` when the requested operation is not valid in the current subscription state:
+
+| Endpoint | Trigger | Old | New |
+|----------|---------|-----|-----|
+| `POST /api/cancel_subscription/` | Subscription already cancelled | 400 | 422 |
+| `POST /api/pause_subscription/` | Cannot pause in current state | 400 | 422 |
+| `POST /api/resume_subscription/` | Cannot resume in current state | 400 | 422 |
+
+**Action required:** If your error handling differentiates 400 from other errors on these endpoints, add a `422` case. The body is still `{"error": "..."}`.
+
+---
+
+## 10. Password Reset — Full Password Validation (Behaviour Change)
+
+`POST /api/reset-password/` now runs Django's full password validators (minimum length, common password check, numeric-only check) instead of only checking `len >= 6`.
+
+**New error response (400):**
+```json
+{"error": ["This password is too short. It must contain at least 8 characters.", "This password is too common."]}
+```
+
+Note: `error` is now an **array of strings** on this endpoint (one message per failing validator).
+
+**Action required:** Display all error strings, not just the first one.
+
+---
+
 ## General Error Handling Reference
 
 ```
-400 Bad Request      — Validation error; body contains field errors or {"error": "..."}
-401 Unauthorized     — Missing/expired JWT; body is {"detail": "..."}
-403 Forbidden        — Authenticated but not allowed; body is {"error": "..."}
-404 Not Found        — Resource not found; body is {"error": "..."}
-429 Too Many Requests — Rate limit hit; handle with Retry-After header
-500 Internal Server Error — Unexpected server error; body is {"error": "An unexpected error occurred. Please try again."}
+400 Bad Request               — Validation error; body is {"error": "..."} or {"field": ["..."]}
+401 Unauthorized              — Missing/expired JWT; body is {"detail": "..."}
+403 Forbidden                 — Authenticated but not allowed; body is {"error": "..."}
+404 Not Found                 — Resource not found; body is {"error": "..."}
+422 Unprocessable Entity      — Request valid but current state prevents it; body is {"error": "..."}
+429 Too Many Requests         — Rate limit hit; handle with Retry-After header
+500 Internal Server Error     — Unexpected server error; body is {"error": "An unexpected error occurred. Please try again."}
 ```
 
 ---

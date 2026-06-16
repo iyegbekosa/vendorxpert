@@ -40,7 +40,7 @@ schema_view = get_schema_view(
 )
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
+    path("xprt-admin/", admin.site.urls),
     path("", include("core.urls")),
     path("", include("userprofile.urls")),
     path("", include("store.urls")),

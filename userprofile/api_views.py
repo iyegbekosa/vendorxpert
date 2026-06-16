@@ -632,10 +632,14 @@ def reset_password_api(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Validate password strength
-    if len(new_password) < 6:
+    # Validate password strength using Django's configured validators.
+    from django.contrib.auth.password_validation import validate_password
+    from django.core.exceptions import ValidationError as DjangoValidationError
+    try:
+        validate_password(new_password)
+    except DjangoValidationError as e:
         return Response(
-            {"error": "Password must be at least 6 characters long"},
+            {"error": list(e.messages)},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -2321,13 +2325,13 @@ def vendor_reviews_api(request):
         average_rating=Avg("rating"), total_reviews=Count("id")
     )
 
-    # Get rating breakdown (count for each star rating)
+    # Get rating breakdown in a single query, then unpack.
+    counts_by_rating = {
+        row["rating"]: row["count"]
+        for row in all_reviews.values("rating").annotate(count=Count("id"))
+    }
     rating_breakdown = {
-        "5_star": all_reviews.filter(rating=5).count(),
-        "4_star": all_reviews.filter(rating=4).count(),
-        "3_star": all_reviews.filter(rating=3).count(),
-        "2_star": all_reviews.filter(rating=2).count(),
-        "1_star": all_reviews.filter(rating=1).count(),
+        f"{n}_star": counts_by_rating.get(n, 0) for n in range(5, 0, -1)
     }
 
     # Get reviews for pagination (after calculating stats)
@@ -2934,7 +2938,7 @@ def cancel_subscription_api(request):
         return Response({"error": "User is not a vendor."}, status=status.HTTP_403_FORBIDDEN)
 
     if vendor.subscription_status == "cancelled":
-        return Response({"error": "Subscription already cancelled."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": "Subscription already cancelled."}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
     subscription_code = getattr(vendor, "paystack_subscription_code", None)
     if subscription_code:
@@ -3013,7 +3017,7 @@ def pause_subscription_api(request):
             {
                 "error": f"Cannot pause subscription. Current status: {vendor.subscription_status}"
             },
-            status=status.HTTP_400_BAD_REQUEST,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
 
@@ -3062,7 +3066,7 @@ def resume_subscription_api(request):
             {
                 "error": f"Cannot resume subscription. Current status: {vendor.subscription_status}"
             },
-            status=status.HTTP_400_BAD_REQUEST,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
 
