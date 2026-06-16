@@ -3348,7 +3348,8 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
         # Update Paystack subscription if vendor has one
         if vendor.paystack_subscription_code and new_plan.paystack_plan_code:
             try:
-                vendor._update_paystack_subscription(new_plan)
+                from .services import update_paystack_subscription
+                update_paystack_subscription(vendor, new_plan)
             except Exception as e:
                 logger.warning(
                     f"Failed to update Paystack subscription for vendor {vendor.id}: {e}"
