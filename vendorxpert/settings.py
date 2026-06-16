@@ -29,7 +29,10 @@ DEBUG = True
 ALLOWED_HOSTS = [
     "vendorxpert.pythonanywhere.com",
     "www.vendorxpert.pythonanywhere.com",
-    "*",
+    "vendorxprt.com",
+    ".vendorxprt.com",  # covers api.vendorxprt.com, www.vendorxprt.com, etc.
+    "localhost",
+    "127.0.0.1",
 ]
 
 

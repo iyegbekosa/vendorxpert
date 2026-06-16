@@ -6,11 +6,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse, HttpResponse
 from .models import Product, Category, Review, OrderItem, Order, Payment
 from .forms import ReviewForm
-from userprofile.models import VendorProfile, UserProfile
+from userprofile.models import UserProfile
 from userprofile.email_utils import send_receipt_email
-from faker import Faker
 import logging
-import random
 from .cart import Cart
 from .forms import OrderForm
 from reportlab.lib.pagesizes import A4
@@ -25,7 +23,6 @@ import json, hmac, hashlib
 from django.views.decorators.http import require_POST
 import uuid
 
-fake = Faker()
 logger = logging.getLogger(__name__)
 
 
@@ -114,53 +111,6 @@ def cart_view(request):
     cart = Cart(request)
 
     return render(request, "store/cart_view.html", {"cart": cart})
-
-
-def generate_fake_categories(request):
-    categories = []
-    for _ in range(5):
-        title = fake.word().capitalize()
-        slug = fake.slug()
-        category = Category.objects.create(title=title, slug=slug)
-        categories.append(
-            {"id": category.id, "title": category.title, "slug": category.slug}
-        )  # Convert to dict
-
-    return JsonResponse(
-        {"categories": categories}
-    )  # Returns a JSON-serializable response
-
-
-def generate_fake_products(
-    request, number_of_products=20, categories=None, vendors=None
-):
-    if not categories:
-        categories = Category.objects.all()
-    if not vendors:
-        vendors = VendorProfile.objects.all()
-
-    for _ in range(number_of_products):
-        title = fake.word().capitalize() + " " + fake.word().capitalize()
-        description = fake.text(max_nb_chars=300)
-        price = random.randint(1000, 50000)  # Price in cents
-        status = random.choice(
-            [Product.DRAFT, Product.WAITING_APPROVAL, Product.ACTIVE, Product.DELETED]
-        )
-        stock = random.choice([Product.IN_STOCK, Product.OUT_OF_STOCK])
-        featured = random.choice([True, False])
-        category = random.choice(categories)
-        vendor = random.choice(vendors)
-
-        product = Product.objects.create(
-            title=title,
-            description=description,
-            price=price,
-            category=category,
-            vendor=vendor,
-            status=status,
-            stock=stock,
-            featured=featured,
-        )
 
 
 @login_required

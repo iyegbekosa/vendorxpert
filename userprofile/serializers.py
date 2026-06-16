@@ -1,6 +1,7 @@
 # userprofile/serializers.py
 from rest_framework import serializers
 from .models import UserProfile, VendorProfile, VendorPlan, SubscriptionHistory
+from .phone_utils import normalize_and_validate_nigerian_phone
 from store.serializers import Product, ProductSerializer
 from store.models import OrderItem, Order
 from django.utils.text import slugify
@@ -11,7 +12,6 @@ import requests
 from django.core.files.base import ContentFile
 from urllib.parse import urlparse
 import os
-import re
 import logging
 from typing import Any
 
@@ -271,60 +271,29 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         return store_name
 
     def validate_phone_number(self, value):
-        """
-        Validate phone number format and uniqueness if provided
-        """
-        if not value or not value.strip():
+        if not value or not str(value).strip():
             return None
-
-        phone_str = str(value).strip().replace(" ", "").replace("-", "")
-
-        # Convert local Nigerian format (090xxxx...) to +234...
-        if phone_str.startswith("0") and len(phone_str) == 11:
-            phone_str = "+234" + phone_str[1:]
-
-        if not re.match(r"^\+234[0-9]{10}$", phone_str):
-            raise serializers.ValidationError(
-                "Enter a valid 11-digit phone number."
-            )
-
-        # Exclude incomplete vendor profiles (no subaccount) from uniqueness check
-        # so orphaned rows from a previous failed registration don't block retries.
+        phone_str = normalize_and_validate_nigerian_phone(value, "phone number")
+        # Exclude incomplete vendor profiles (no subaccount) so orphaned rows
+        # from a previous failed registration don't block legitimate retries.
         if VendorProfile.objects.filter(phone_number=phone_str).exclude(
             subaccount_code__isnull=True
         ).exclude(subaccount_code="").exists():
             raise serializers.ValidationError(
-                "This phone number is already registered with another vendor"
+                "This phone number is already registered with another vendor."
             )
-
         return phone_str
 
     def validate_whatsapp_number(self, value):
-        """
-        Validate WhatsApp number format and uniqueness if provided
-        """
-        if not value or not value.strip():
+        if not value or not str(value).strip():
             return None
-
-        phone_str = str(value).strip().replace(" ", "").replace("-", "")
-
-        # Convert local Nigerian format (090xxxx...) to +234...
-        if phone_str.startswith("0") and len(phone_str) == 11:
-            phone_str = "+234" + phone_str[1:]
-
-        if not re.match(r"^\+234[0-9]{10}$", phone_str):
-            raise serializers.ValidationError(
-                "Enter a valid 11-digit WhatsApp number."
-            )
-
-        # Exclude incomplete vendor profiles (no subaccount) from uniqueness check.
+        phone_str = normalize_and_validate_nigerian_phone(value, "WhatsApp number")
         if VendorProfile.objects.filter(whatsapp_number=phone_str).exclude(
             subaccount_code__isnull=True
         ).exclude(subaccount_code="").exists():
             raise serializers.ValidationError(
-                "This WhatsApp number is already registered with another vendor"
+                "This WhatsApp number is already registered with another vendor."
             )
-
         return phone_str
 
     def validate(self, data):
@@ -524,61 +493,29 @@ class VendorUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_phone_number(self, value):
-        """Validate and normalize phone number to accept both formats"""
-        if not value or not value.strip():
+        if not value or not str(value).strip():
             return ""
-
-        # Convert to string and clean
-        phone_str = str(value).strip().replace(" ", "").replace("-", "")
-
-        # Handle Nigerian local format (09025144369 -> +2349025144369)
-        if phone_str.startswith("0") and len(phone_str) == 11:
-            phone_str = "+234" + phone_str[1:]  # Remove 0 and add +234
-
-        if not re.match(r"^\+234[0-9]{10}$", phone_str):
-            raise serializers.ValidationError(
-                "Enter a valid 11-digit phone number."
-            )
-
-        # Check for uniqueness - exclude current vendor if this is an update
+        phone_str = normalize_and_validate_nigerian_phone(value, "phone number")
         existing = VendorProfile.objects.filter(phone_number=phone_str)
         if self.instance and self.instance.pk:
             existing = existing.exclude(pk=self.instance.pk)
-
         if existing.exists():
             raise serializers.ValidationError(
                 "A vendor with this phone number already exists."
             )
-
         return phone_str
 
     def validate_whatsapp_number(self, value):
-        """Validate and normalize WhatsApp number to accept both formats"""
-        if not value or not value.strip():
+        if not value or not str(value).strip():
             return ""
-
-        # Convert to string and clean
-        phone_str = str(value).strip().replace(" ", "").replace("-", "")
-
-        # Handle Nigerian local format (09025144369 -> +2349025144369)
-        if phone_str.startswith("0") and len(phone_str) == 11:
-            phone_str = "+234" + phone_str[1:]  # Remove 0 and add +234
-
-        if not re.match(r"^\+234[0-9]{10}$", phone_str):
-            raise serializers.ValidationError(
-                "Enter a valid 11-digit WhatsApp number."
-            )
-
-        # Check for uniqueness - exclude current vendor if this is an update
+        phone_str = normalize_and_validate_nigerian_phone(value, "WhatsApp number")
         existing = VendorProfile.objects.filter(whatsapp_number=phone_str)
         if self.instance and self.instance.pk:
             existing = existing.exclude(pk=self.instance.pk)
-
         if existing.exists():
             raise serializers.ValidationError(
                 "A vendor with this WhatsApp number already exists."
             )
-
         return phone_str
 
     def save(self, **kwargs):

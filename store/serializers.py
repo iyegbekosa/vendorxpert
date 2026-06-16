@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Product, Review, Order, Category
+from userprofile.phone_utils import normalize_and_validate_nigerian_phone
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -85,25 +86,6 @@ class CheckoutSerializer(serializers.ModelSerializer):
         fields = ["first_name", "last_name", "phone", "pickup_location"]
 
     def validate_phone(self, value):
-        """Normalize Nigerian local formats (090...) to +234 and validate.
-
-        Accepts either an 11-digit local number starting with 0 (e.g. 09012345678)
-        or an international +234XXXXXXXXXX. Returns the normalized +234 string.
-        """
         if not value or not str(value).strip():
-            raise serializers.ValidationError("Phone number is required")
-
-        phone_str = str(value).strip().replace(" ", "").replace("-", "")
-
-        # Convert local Nigerian format to international
-        if phone_str.startswith("0") and len(phone_str) == 11:
-            phone_str = "+234" + phone_str[1:]
-
-        import re
-
-        if not re.match(r"^\+234[0-9]{10}$", phone_str):
-            raise serializers.ValidationError(
-                "Enter a valid 11-digit phone number."
-            )
-
-        return phone_str
+            raise serializers.ValidationError("Phone number is required.")
+        return normalize_and_validate_nigerian_phone(value, "phone number")
