@@ -1539,7 +1539,7 @@ def my_store_api(request):
     try:
         vendor_profile = request.user.vendor_profile
     except AttributeError:
-        return Response({"error": "User is not a vendor."}, status=403)
+        return Response({"error": "User is not a vendor."}, status=status.HTTP_403_FORBIDDEN)
 
     if request.method == "PUT":
         serializer = VendorUpdateSerializer(
@@ -1654,7 +1654,7 @@ def update_vendor_api(request):
     try:
         vendor = request.user.vendor_profile
     except AttributeError:
-        return Response({"error": "User is not a vendor."}, status=403)
+        return Response({"error": "User is not a vendor."}, status=status.HTTP_403_FORBIDDEN)
 
     # Use partial=True for PATCH, False for PUT
     serializer = VendorUpdateSerializer(
@@ -1663,9 +1663,9 @@ def update_vendor_api(request):
 
     if serializer.is_valid():
         serializer.save()
-        return Response(serializer.data, status=200)
+        return Response(serializer.data, status=status.HTTP_200_OK)
     else:
-        return Response(serializer.errors, status=400)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @swagger_auto_schema(
@@ -1767,8 +1767,8 @@ def my_subscription_status_api(request):
         vendor = request.user.vendor_profile
     except AttributeError:
         return Response(
-            {"is_vendor": False, "message": "User is not registered as a vendor"},
-            status=403,
+            {"error": "User is not registered as a vendor"},
+            status=status.HTTP_403_FORBIDDEN,
         )
 
     # Calculate subscription details
@@ -1818,7 +1818,7 @@ def my_subscription_status_api(request):
             "plan": plan_info,
             "product_usage": product_usage,
         },
-        status=200,
+        status=status.HTTP_200_OK,
     )
 
 
@@ -1911,12 +1911,12 @@ def my_subscription_status_api(request):
 @parser_classes([MultiPartParser, FormParser])
 def add_product_api(request):
     if not can_create_product(request.user):
-        return Response({"detail": "Product limit reached for your plan."}, status=403)
+        return Response({"error": "Product limit reached for your plan."}, status=status.HTTP_403_FORBIDDEN)
     serializer = ProductCreateSerializer(data=request.data)
     if serializer.is_valid():
         product = serializer.save(vendor=request.user.vendor_profile)
         return Response({"success": True, "product_id": product.id})
-    return Response(serializer.errors, status=400)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @swagger_auto_schema(
@@ -2097,7 +2097,7 @@ def delete_product_api(request, pk):
 def vendor_order_list_api(request):
     if not hasattr(request.user, "vendor_profile"):
         return Response(
-            {"detail": "Only vendors can access this endpoint."},
+            {"error": "Only vendors can access this endpoint."},
             status=status.HTTP_403_FORBIDDEN,
         )
 
@@ -2165,7 +2165,7 @@ def order_detail_api(request, pk):
 
     if not hasattr(request.user, "vendor_profile"):
         return Response(
-            {"detail": "Only vendors can access this view."},
+            {"error": "Only vendors can access this view."},
             status=status.HTTP_403_FORBIDDEN,
         )
 
@@ -2173,7 +2173,7 @@ def order_detail_api(request, pk):
 
     if not order.items.filter(product__vendor=vendor).exists():
         return Response(
-            {"detail": "You are not authorized to view this order."},
+            {"error": "You are not authorized to view this order."},
             status=status.HTTP_403_FORBIDDEN,
         )
 
@@ -2193,7 +2193,7 @@ def toggle_fulfillment_api(request, pk):
         )
     except OrderItem.DoesNotExist:
         return Response(
-            {"detail": "Order item not found or unauthorized."},
+            {"error": "Order item not found or unauthorized."},
             status=status.HTTP_404_NOT_FOUND,
         )
 
@@ -2301,7 +2301,7 @@ def vendor_reviews_api(request):
     """
     if not hasattr(request.user, "vendor_profile"):
         return Response(
-            {"detail": "Only vendors can access this endpoint."},
+            {"error": "Only vendors can access this endpoint."},
             status=status.HTTP_403_FORBIDDEN,
         )
 
@@ -2446,7 +2446,7 @@ def vendor_reviews_public_api(request, vendor_id):
         vendor = VendorProfile.objects.get(id=vendor_id)
     except VendorProfile.DoesNotExist:
         return Response(
-            {"detail": "Vendor not found."},
+            {"error": "Vendor not found."},
             status=status.HTTP_404_NOT_FOUND,
         )
 
@@ -2540,7 +2540,7 @@ def vendor_plans_api(request):
     """
     plans = VendorPlan.objects.filter(is_active=True).order_by("price")
     serializer = VendorPlanSerializer(plans, many=True)
-    return Response(serializer.data, status=200)
+    return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 @swagger_auto_schema(
@@ -2808,19 +2808,19 @@ def resubscribe_api(request):
     try:
         vendor = user.vendor_profile
     except VendorProfile.DoesNotExist:
-        return Response({"error": "User is not a vendor."}, status=400)
+        return Response({"error": "User is not a vendor."}, status=status.HTTP_403_FORBIDDEN)
 
     # Validate request data using serializer
     serializer = SubscriptionInitiateSerializer(data=request.data)
     if not serializer.is_valid():
-        return Response(serializer.errors, status=400)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     plan_id = serializer.validated_data["plan_id"]
 
     try:
         selected_plan = VendorPlan.objects.get(id=plan_id, is_active=True)
     except VendorPlan.DoesNotExist:
-        return Response({"error": "Invalid or inactive plan."}, status=404)
+        return Response({"error": "Invalid or inactive plan."}, status=status.HTTP_404_NOT_FOUND)
 
     # Handle free plans
     if selected_plan.price == 0:
@@ -2835,7 +2835,7 @@ def resubscribe_api(request):
                 "plan": selected_plan.name,
                 "expiry": vendor.subscription_expiry.isoformat(),
             },
-            status=200,
+            status=status.HTTP_200_OK,
         )
 
     # Handle paid plans
@@ -2883,11 +2883,11 @@ def resubscribe_api(request):
                 "access_code": res_data["data"]["access_code"],
                 "reference": res_data["data"]["reference"],
             },
-            status=200,
+            status=status.HTTP_200_OK,
         )
     else:
         return Response(
-            {"error": res_data.get("message", "Paystack error")}, status=400
+            {"error": res_data.get("message", "Paystack error")}, status=status.HTTP_400_BAD_REQUEST
         )
 
 
@@ -2930,10 +2930,10 @@ def cancel_subscription_api(request):
     try:
         vendor = user.vendor_profile
     except VendorProfile.DoesNotExist:
-        return Response({"error": "User is not a vendor."}, status=403)
+        return Response({"error": "User is not a vendor."}, status=status.HTTP_403_FORBIDDEN)
 
     if vendor.subscription_status == "cancelled":
-        return Response({"message": "Subscription already cancelled."}, status=400)
+        return Response({"error": "Subscription already cancelled."}, status=status.HTTP_400_BAD_REQUEST)
 
     subscription_code = getattr(vendor, "paystack_subscription_code", None)
     if subscription_code:
@@ -2954,7 +2954,7 @@ def cancel_subscription_api(request):
     vendor.subscription_status = "cancelled"
     vendor.save()
 
-    return Response({"message": "Subscription cancelled successfully."}, status=200)
+    return Response({"message": "Subscription cancelled successfully."}, status=status.HTTP_200_OK)
 
 
 @swagger_auto_schema(
@@ -2994,7 +2994,7 @@ def pause_subscription_api(request):
     try:
         vendor = request.user.vendor_profile
     except VendorProfile.DoesNotExist:
-        return Response({"error": "User is not a vendor."}, status=403)
+        return Response({"error": "User is not a vendor."}, status=status.HTTP_403_FORBIDDEN)
 
     reason = request.data.get("reason", "")
 
@@ -3005,14 +3005,14 @@ def pause_subscription_api(request):
                 "status": vendor.subscription_status,
                 "reason": reason,
             },
-            status=200,
+            status=status.HTTP_200_OK,
         )
     else:
         return Response(
             {
                 "error": f"Cannot pause subscription. Current status: {vendor.subscription_status}"
             },
-            status=400,
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
 
@@ -3046,7 +3046,7 @@ def resume_subscription_api(request):
     try:
         vendor = request.user.vendor_profile
     except VendorProfile.DoesNotExist:
-        return Response({"error": "User is not a vendor."}, status=403)
+        return Response({"error": "User is not a vendor."}, status=status.HTTP_403_FORBIDDEN)
 
     if vendor.resume_subscription():
         return Response(
@@ -3054,14 +3054,14 @@ def resume_subscription_api(request):
                 "message": "Subscription resumed successfully.",
                 "status": vendor.subscription_status,
             },
-            status=200,
+            status=status.HTTP_200_OK,
         )
     else:
         return Response(
             {
                 "error": f"Cannot resume subscription. Current status: {vendor.subscription_status}"
             },
-            status=400,
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
 
@@ -3119,11 +3119,11 @@ def change_plan_api(request):
     try:
         vendor = request.user.vendor_profile
     except VendorProfile.DoesNotExist:
-        return Response({"error": "User is not a vendor."}, status=403)
+        return Response({"error": "User is not a vendor."}, status=status.HTTP_403_FORBIDDEN)
 
     serializer = ChangePlanSerializer(data=request.data, context={"vendor": vendor})
     if not serializer.is_valid():
-        return Response(serializer.errors, status=400)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     validated_data = serializer.validated_data
     plan_id = validated_data["plan_id"]
@@ -3132,7 +3132,7 @@ def change_plan_api(request):
     try:
         new_plan = VendorPlan.objects.get(id=plan_id, is_active=True)
     except VendorPlan.DoesNotExist:
-        return Response({"error": "Plan not found or inactive."}, status=404)
+        return Response({"error": "Plan not found or inactive."}, status=status.HTTP_404_NOT_FOUND)
 
     try:
         result = vendor.change_plan_with_payment(
@@ -3153,14 +3153,14 @@ def change_plan_api(request):
                 response_data["authorization_url"] = result["authorization_url"]
                 response_data["payment_status"] = "payment_required"
 
-            return Response(response_data, status=200)
+            return Response(response_data, status=status.HTTP_200_OK)
         else:
             error_message = (
                 result.get("error", "Failed to change plan.")
                 if result
                 else "Failed to change plan."
             )
-            return Response({"error": error_message}, status=400)
+            return Response({"error": error_message}, status=status.HTTP_400_BAD_REQUEST)
 
     except Exception as e:
         logger.error(f"Unexpected error during plan change for vendor {vendor.id}: {e}", exc_info=True)
@@ -3199,7 +3199,7 @@ def subscription_history_api(request):
     try:
         vendor = request.user.vendor_profile
     except VendorProfile.DoesNotExist:
-        return Response({"error": "User is not a vendor."}, status=403)
+        return Response({"error": "User is not a vendor."}, status=status.HTTP_403_FORBIDDEN)
 
     from .models import SubscriptionHistory
     from .serializers import SubscriptionHistorySerializer
