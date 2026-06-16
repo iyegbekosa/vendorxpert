@@ -7,7 +7,7 @@ from store.models import OrderItem, Order
 from django.utils.text import slugify
 from datetime import timedelta
 from django.utils import timezone
-from store.utils import create_paystack_subaccount
+from store.utils import create_paystack_subaccount, PaystackError
 import requests
 from django.core.files.base import ContentFile
 from urllib.parse import urlparse
@@ -16,6 +16,10 @@ import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ── Module-level constants ──────────────────────────────────────────────────
+STORE_LOGO_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+TRIAL_PERIOD_DAYS = 30
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -139,7 +143,7 @@ class ProfilePictureUploadSerializer(serializers.ModelSerializer):
                         raise serializers.ValidationError(
                             "Invalid SVG file. File must contain valid SVG content."
                         )
-                except Exception:
+                except (IOError, UnicodeDecodeError):
                     raise serializers.ValidationError(
                         "Invalid SVG file. Unable to process the file."
                     )
@@ -251,6 +255,16 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
 
         return account_number
 
+    def validate_bank_code(self, value):
+        from .bank_codes import VALID_BANK_CODES, get_bank_name
+        code = value.strip()
+        if code not in VALID_BANK_CODES:
+            raise serializers.ValidationError(
+                f"'{code}' is not a recognised Nigerian bank code. "
+                "Please check your bank code and try again."
+            )
+        return code
+
     def validate_store_name(self, value):
         """
         Validate store name
@@ -331,8 +345,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         # never leave an orphaned VendorProfile behind.
         valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg"]
         if file_logo:
-            max_size = 5 * 1024 * 1024
-            if hasattr(file_logo, "size") and file_logo.size > max_size:
+            if hasattr(file_logo, "size") and file_logo.size > STORE_LOGO_MAX_SIZE:
                 raise serializers.ValidationError(
                     {"store_logo": ["File size cannot exceed 5MB."]}
                 )
@@ -362,7 +375,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
             "plan": default_plan,
             "subscription_status": "trial",
             "trial_start": timezone.now(),
-            "trial_end": timezone.now() + timedelta(days=30),
+            "trial_end": timezone.now() + timedelta(days=TRIAL_PERIOD_DAYS),
             "is_verified": True,
             **validated_data,
         }
@@ -412,7 +425,7 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
                         logger.warning(
                             f"[userprofile] Failed to fetch store_logo from {store_logo_url}: HTTP {resp.status_code}"
                         )
-                except Exception as logo_exc:
+                except requests.RequestException as logo_exc:
                     logger.warning(
                         f"[userprofile] Error fetching store_logo from {store_logo_url}: {logo_exc}"
                     )
@@ -425,15 +438,23 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         try:
             create_paystack_subaccount(vendor, account_number, bank_code)
             logger.info(f"Paystack subaccount created for vendor {vendor.pk} ({vendor.store_name})")
-        except Exception as paystack_error:
+        except (requests.RequestException, PaystackError) as paystack_error:
             error_msg = str(paystack_error)
             logger.error(
                 f"Paystack subaccount creation failed for {vendor.store_name}: {error_msg}"
             )
             # The atomic block already committed, so clean up manually.
-            vendor.delete()
-            request.user.is_vendor = False
-            request.user.save()
+            # Wrap cleanup in its own try/except — a cleanup failure must not
+            # mask the original Paystack error or leave the user stuck.
+            try:
+                vendor.delete()
+                request.user.is_vendor = False
+                request.user.save()
+            except Exception as cleanup_error:
+                logger.error(
+                    f"Cleanup after Paystack failure also failed for vendor {vendor.pk}: {cleanup_error}. "
+                    "The VendorProfile row may be orphaned and require manual review."
+                )
             raise serializers.ValidationError(
                 f"Payment system setup failed: {error_msg}. "
                 f"Please verify your bank details (account number and bank code) and try again."

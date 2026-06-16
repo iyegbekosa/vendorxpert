@@ -9,6 +9,7 @@ from rest_framework import status
 
 from .models import UserProfile, VendorProfile, VendorPlan, SubscriptionHistory
 from .phone_utils import normalize_and_validate_nigerian_phone
+from store.utils import PaystackError
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +155,7 @@ class VendorRegistrationAPITests(APITestCase):
     @patch("userprofile.serializers.create_paystack_subaccount")
     @patch("userprofile.api_views.send_vendor_welcome_email")
     def test_paystack_failure_rolls_back_vendor_creation(self, mock_email, mock_paystack):
-        mock_paystack.side_effect = Exception("Bank account not found")
+        mock_paystack.side_effect = PaystackError("Bank account not found")
 
         resp = self.client.post(self.url, VENDOR_POST_DATA, format="json")
 

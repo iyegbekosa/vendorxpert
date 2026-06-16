@@ -59,6 +59,11 @@ from rest_framework_simplejwt.settings import api_settings as jwt_api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from .throttles import SignupRateThrottle, LoginRateThrottle, PasswordResetRateThrottle
 
+# ── Module-level constants ──────────────────────────────────────────────────
+OTP_LENGTH = 6
+OTP_EXPIRY_MINUTES = 15
+SUBSCRIPTION_RENEWAL_DAYS = 30
+
 
 logger = logging.getLogger(__name__)
 
@@ -177,13 +182,12 @@ def signup_api(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Generate 6-digit code
-        code = "".join(random.choices("0123456789", k=6))
+        code = "".join(random.choices("0123456789", k=OTP_LENGTH))
 
         # Store hashed password in payload so we don't keep plaintext
         hashed = make_password(data.get("password"))
 
-        expires_at = timezone.now() + timedelta(minutes=15)
+        expires_at = timezone.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
 
         payload = {
             "user_name": data.get("user_name"),
@@ -294,8 +298,8 @@ def verify_signup_api(request):
     # Log the user in and send welcome email
     try:
         login(request, user)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Auto-login after email verification failed for {email}: {e}")
 
     try:
         send_welcome_email(user)
@@ -366,12 +370,10 @@ def resend_verification_api(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Generate new 6-digit code
-    new_code = "".join(random.choices("0123456789", k=6))
+    new_code = "".join(random.choices("0123456789", k=OTP_LENGTH))
 
-    # Update existing record with new code and extended expiration
     ev.code = new_code
-    ev.expires_at = timezone.now() + timedelta(minutes=15)
+    ev.expires_at = timezone.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
     ev.save()
 
     # Send the new verification code
@@ -447,9 +449,8 @@ def forgot_password_api(request):
             status=status.HTTP_200_OK,
         )
 
-    # Generate 6-digit code
-    code = "".join(random.choices("0123456789", k=6))
-    expires_at = timezone.now() + timedelta(minutes=15)
+    code = "".join(random.choices("0123456789", k=OTP_LENGTH))
+    expires_at = timezone.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
 
     # Create verification record for password reset
     EmailVerification.objects.update_or_create(
@@ -2827,7 +2828,7 @@ def resubscribe_api(request):
         vendor.plan = selected_plan
         vendor.subscription_status = "active"
         vendor.subscription_start = timezone.now()
-        vendor.subscription_expiry = timezone.now() + timedelta(days=30)
+        vendor.subscription_expiry = timezone.now() + timedelta(days=SUBSCRIPTION_RENEWAL_DAYS)
         vendor.save()
         return Response(
             {
@@ -3165,7 +3166,8 @@ def change_plan_api(request):
     except Exception as e:
         logger.error(f"Unexpected error during plan change for vendor {vendor.id}: {e}", exc_info=True)
         return Response(
-            {"error": "An unexpected error occurred. Please try again."}, status=500
+            {"error": "An unexpected error occurred. Please try again."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
 
@@ -3230,7 +3232,7 @@ def paystack_webhook(request):
 
     try:
         event_data = json.loads(payload.decode("utf-8"))
-    except Exception as e:
+    except json.JSONDecodeError as e:
         logger.error(f"Webhook JSON error: {e}")
         return HttpResponse(status=400)
 
@@ -3295,7 +3297,7 @@ def handle_successful_payment(data):
         subscription_code or vendor.paystack_subscription_code
     )
     vendor.subscription_status = "active"
-    vendor.subscription_expiry = now + timezone.timedelta(days=30)
+    vendor.subscription_expiry = now + timedelta(days=SUBSCRIPTION_RENEWAL_DAYS)
     vendor.last_payment_date = now
     vendor.failed_payment_count = 0  # Reset failed payment count
     vendor.pending_ref = None
@@ -3349,7 +3351,7 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
         # Special handling for trial-to-paid conversions
         if vendor.subscription_status == "trial" or is_trial_upgrade:
             vendor.subscription_status = "active"
-            vendor.subscription_expiry = timezone.now() + timedelta(days=30)
+            vendor.subscription_expiry = timezone.now() + timedelta(days=SUBSCRIPTION_RENEWAL_DAYS)
             vendor.trial_start = None
             vendor.trial_end = None
 
@@ -3358,7 +3360,7 @@ def handle_plan_change_payment(vendor, data, metadata, amount, reference):
             try:
                 from .services import update_paystack_subscription
                 update_paystack_subscription(vendor, new_plan)
-            except Exception as e:
+            except requests.RequestException as e:
                 logger.warning(
                     f"Failed to update Paystack subscription for vendor {vendor.id}: {e}"
                 )
