@@ -11,6 +11,7 @@ import requests
 from django.core.files.base import ContentFile
 from urllib.parse import urlparse
 import os
+import re
 import logging
 from typing import Any
 
@@ -282,8 +283,6 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         if phone_str.startswith("0") and len(phone_str) == 11:
             phone_str = "+234" + phone_str[1:]
 
-        import re
-
         if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(
                 "Enter a valid 11-digit phone number."
@@ -312,8 +311,6 @@ class VendorRegisterSerializer(serializers.ModelSerializer):
         # Convert local Nigerian format (090xxxx...) to +234...
         if phone_str.startswith("0") and len(phone_str) == 11:
             phone_str = "+234" + phone_str[1:]
-
-        import re
 
         if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(
@@ -538,9 +535,6 @@ class VendorUpdateSerializer(serializers.ModelSerializer):
         if phone_str.startswith("0") and len(phone_str) == 11:
             phone_str = "+234" + phone_str[1:]  # Remove 0 and add +234
 
-        # Basic validation for Nigerian phone numbers
-        import re
-
         if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(
                 "Enter a valid 11-digit phone number."
@@ -569,9 +563,6 @@ class VendorUpdateSerializer(serializers.ModelSerializer):
         # Handle Nigerian local format (09025144369 -> +2349025144369)
         if phone_str.startswith("0") and len(phone_str) == 11:
             phone_str = "+234" + phone_str[1:]  # Remove 0 and add +234
-
-        # Basic validation for Nigerian phone numbers
-        import re
 
         if not re.match(r"^\+234[0-9]{10}$", phone_str):
             raise serializers.ValidationError(

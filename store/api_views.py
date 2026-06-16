@@ -6,8 +6,6 @@ from rest_framework import status
 from .models import Product, Category, Payment, OrderItem, Review, Order
 from userprofile.email_utils import send_receipt_email, send_vendor_order_notification
 import logging
-
-logger = logging.getLogger(__name__)
 from .serializers import (
     ProductSerializer,
     ReviewSerializer,
@@ -25,7 +23,7 @@ from django.conf import settings
 from django.db import transaction
 from collections import defaultdict
 from django.urls import reverse
-import hmac, hashlib, logging, json
+import hmac, hashlib, json
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from drf_yasg.utils import swagger_auto_schema
@@ -488,18 +486,14 @@ def get_product_reviews_api(request, pk):
 
     Returns a paginated list of all approved reviews for the specified product.
     """
-    print(f"Debug: Looking for product with pk={pk}, type={type(pk)}")
     try:
         product = Product.objects.get(pk=pk)
-        print(f"Debug: Found product: {product}")
     except Product.DoesNotExist:
-        print(f"Debug: Product with pk={pk} does not exist")
         return Response({"error": f"Product with ID {pk} not found"}, status=404)
 
     reviews = Review.objects.filter(product=product, approved_review=True).order_by(
         "-created_date"
     )
-    print(f"Debug: Found {reviews.count()} reviews")
 
     paginator = StandardResultsPagination()
     result_page = paginator.paginate_queryset(reviews, request)

@@ -3,29 +3,25 @@ from django.db.models import Q
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
-from django.http import FileResponse, JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse
 from .models import Product, Category, Review, OrderItem, Order, Payment
 from .forms import ReviewForm
 from userprofile.models import VendorProfile, UserProfile
 from userprofile.email_utils import send_receipt_email
 from faker import Faker
 import logging
-
-logger = logging.getLogger(__name__)
 import random
 from .cart import Cart
 from .forms import OrderForm
-from reportlab.lib.utils import ImageReader
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from django.conf import settings
 from django.urls import reverse
-from decimal import Decimal
 import requests
 import io
 import os
 from collections import defaultdict
-import json, logging, hmac, hashlib
+import json, hmac, hashlib
 from django.views.decorators.http import require_POST
 import uuid
 
@@ -114,38 +110,10 @@ def review_disapprove(request, pk):
     )
 
 
-# def add_to_cart(request, product_id):
-#     cart = Cart(request)
-#     cart.add(product_id)
-
-#     return redirect('frontpage')
-
-
-# def remove_from_cart(request, product_id):
-#     cart = Cart(request)
-#     cart.remove(product_id)
-
-#     return redirect('cart_view')
-
-
 def cart_view(request):
     cart = Cart(request)
 
     return render(request, "store/cart_view.html", {"cart": cart})
-
-
-# def change_quantity(request, product_id):
-#     action = request.GET.get('action','')
-#     if action:
-#         quantity = 1
-
-#         if action == 'decrease':
-#             quantity = -1
-
-#         cart = Cart(request)
-#         cart.add(product_id, quantity, True)
-
-#     return redirect('cart_view')
 
 
 def generate_fake_categories(request):
@@ -193,7 +161,6 @@ def generate_fake_products(
             stock=stock,
             featured=featured,
         )
-        print(f"Created product: {product.title}")
 
 
 @login_required

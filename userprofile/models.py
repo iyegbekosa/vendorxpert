@@ -10,7 +10,10 @@ from phonenumber_field.modelfields import PhoneNumberField
 from datetime import timedelta
 from django.utils import timezone
 import uuid
+import logging
 from cloudinary.models import CloudinaryField
+
+logger = logging.getLogger(__name__)
 
 
 class CustomAccountManager(BaseUserManager):
@@ -402,7 +405,7 @@ class VendorProfile(models.Model):
                 requires_payment = is_upgrade and prorated_amount > 0
 
         else:
-            print("[Model] Immediate change or no subscription expiry - No proration")
+            pass
 
         # If payment is required, process it through Paystack
         if requires_payment and request:
@@ -503,10 +506,7 @@ class VendorProfile(models.Model):
                     self._update_paystack_subscription(new_plan)
 
                 except Exception as e:
-                    # Log the error but don't fail the entire operation for subscription update issues
-                    print(f"[Model] Failed to update Paystack subscription for vendor {self.id}: {str(e)}")
-            else:
-                print("[Model] Skipping Paystack subscription update (no subscription code or plan code)")
+                    logger.error(f"Failed to update Paystack subscription for vendor {self.id}: {e}")
 
           
             self.plan = new_plan

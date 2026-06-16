@@ -84,7 +84,6 @@ def edit_product(request, pk):
 
         if form.is_valid():
             query = form.cleaned_data["title"]
-            print(query)
             form.save()
             messages.success(request, f"{query} was changed successfully")
 
@@ -136,8 +135,7 @@ def register_vendor(request):
                 vendor, request.POST["account_number"], request.POST["bank_code"]
             )
         except Exception as e:
-            # Optional: rollback or log
-            print("Subaccount error:", e)
+            logger.error(f"Subaccount creation error for vendor {vendor.id}: {e}")
 
         # Send vendor welcome email
         try:
