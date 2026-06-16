@@ -1275,6 +1275,10 @@ def register_vendor_api(request):
         vendor.delete()
         request.user.is_vendor = False
         request.user.save()
+        # Clear Django 4.x's fields_cache for the reverse OneToOne so the
+        # serializer's hasattr(request.user, "vendor_profile") does a fresh
+        # DB look-up and sees the deletion.
+        request.user._state.fields_cache.pop("vendor_profile", None)
 
     serializer = VendorRegisterSerializer(
         data=request.data, context={"request": request}
