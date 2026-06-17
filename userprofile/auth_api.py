@@ -94,8 +94,7 @@ def _revoke_user_tokens_if_refresh_reused(refresh_token):
         _blacklist_all_refresh_tokens_for_user(user_id)
 
 
-def _isoformat_or_none(value):
-    return value.isoformat() if value else None
+from .services import _isoformat_or_none  # noqa: E402 — after local helpers
 
 
 def _vendor_subscription_payload(vendor):

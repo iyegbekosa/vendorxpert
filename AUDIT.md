@@ -77,10 +77,10 @@ Fixes already applied are marked **[FIXED]**.
 - **Issue**: `change_plan_with_payment` (169 lines, makes HTTP calls) and `_update_paystack_subscription` live on the model. Models should only contain field definitions, properties, and lightweight helpers.
 - **Fix applied**: `userprofile/services.py` created. Model methods are now thin wrappers that delegate to the service layer. All HTTP calls and business logic live in `services.py`.
 
-### 11. Business logic in views (vendor KPIs)
-- **File**: `userprofile/api_views.py:2642-2745`
-- **Issue**: Complex aggregation and date arithmetic for KPIs is inlined in the view function. Hard to test and reuse.
-- **Fix**: Extract to a `VendorKPIService` or model method.
+### 11. Business logic in views (vendor KPIs) **[FIXED]**
+- **File**: `userprofile/vendor_api.py`, `userprofile/services.py`
+- **Issue**: Complex aggregation and date arithmetic for KPIs was inlined in the view. Hard to test and reuse.
+- **Fix applied**: `get_vendor_kpis(vendor)` added to `services.py`. `vendor_kpis_api` reduced to a 2-line auth check + service call. `_isoformat_or_none` moved to `services.py` as the single canonical definition; imported by `auth_api.py` and `vendor_api.py`.
 
 ### 12. Broad `except Exception` blocks **[FIXED]**
 - **Files**: `userprofile/api_views.py:295-296, 488-497`, `email_utils.py:55, 91, 127`, `userprofile/serializers.py:446-449`
@@ -269,9 +269,10 @@ Fixes already applied are marked **[FIXED]**.
 | 31 | `vendor_kpis_api` rating breakdown: 5 separate COUNTs → single GROUP BY query | `userprofile/vendor_api.py` |
 | 32 | `toggle_fulfillment`, `order_list`, `order_detail` → `@vendor_required`; `review_approve` / `review_disapprove` → `@staff_member_required` | `userprofile/views.py`, `store/views.py` |
 | 33 | `VendorProfile.clean()` added — validates `plan` and `subscription_expiry` are set when subscription is active/grace/defaulted | `userprofile/models.py` |
+| 34 | `get_vendor_kpis()` extracted to `services.py`; `_isoformat_or_none` moved there as single definition | `userprofile/services.py`, `userprofile/vendor_api.py`, `userprofile/auth_api.py` |
 
 ---
 
 ## Still Pending
 
-- **Business logic in vendor KPI view** (#11) — extract aggregation to a dedicated service; currently inlined in the view
+All 40 audit issues resolved. See Fixes Applied table above.
