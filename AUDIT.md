@@ -138,11 +138,11 @@ Fixes already applied are marked **[FIXED]**.
   - `Product.status` — filtered on almost every product query
 - **Fix applied**: `db_index=True` added to all three fields. Covered by migration `0016_add_indexes_fix_created_at.py`.
 
-### 23. Nullable fields that should have values after onboarding
+### 23. Nullable fields that should have values after onboarding **[FIXED]**
 - **File**: `userprofile/models.py`
 - **Fields**: `VendorProfile.paystack_subscription_code`, `VendorProfile.subscription_expiry`, `VendorProfile.plan`
-- **Issue**: These are nullable but should be set for any vendor with an active subscription. Lack of a NOT NULL constraint lets bad states exist silently.
-- **Fix**: Add `null=False` with sensible defaults, or add a model-level `clean()` validation.
+- **Issue**: These are nullable but should be set for any vendor with an active subscription. Lack of NOT NULL constraints lets bad states exist silently.
+- **Fix applied**: `VendorProfile.clean()` added — raises `ValidationError` if `plan` or `subscription_expiry` is null when `subscription_status` is in `{"active", "grace", "defaulted"}`. Called automatically by Django's model validation pipeline on admin saves and `full_clean()` calls.
 
 ### 24. Deep nesting in `change_plan_with_payment`
 - **File**: `userprofile/models.py:368-537`
@@ -268,10 +268,10 @@ Fixes already applied are marked **[FIXED]**.
 | 30 | `CheckoutSerializer` — `validate_first_name` / `validate_last_name` added with alpha-only + max_length=50 validation | `store/serializers.py` |
 | 31 | `vendor_kpis_api` rating breakdown: 5 separate COUNTs → single GROUP BY query | `userprofile/vendor_api.py` |
 | 32 | `toggle_fulfillment`, `order_list`, `order_detail` → `@vendor_required`; `review_approve` / `review_disapprove` → `@staff_member_required` | `userprofile/views.py`, `store/views.py` |
+| 33 | `VendorProfile.clean()` added — validates `plan` and `subscription_expiry` are set when subscription is active/grace/defaulted | `userprofile/models.py` |
 
 ---
 
 ## Still Pending
 
-- **Business logic in vendor KPI view** (#11) — extract aggregation to `VendorKPIService`
-- **Nullable subscription fields** (#23) — add `clean()` validation for `plan`/`subscription_expiry` on active vendors
+- **Business logic in vendor KPI view** (#11) — extract aggregation to a dedicated service; currently inlined in the view

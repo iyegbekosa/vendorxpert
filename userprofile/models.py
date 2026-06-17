@@ -231,6 +231,19 @@ class VendorProfile(models.Model):
     def __str__(self):
         return f"{self.store_name} (Vendor: {self.user.user_name})"
 
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        paid_statuses = {"active", "grace", "defaulted"}
+        if self.subscription_status in paid_statuses:
+            if not self.plan:
+                raise ValidationError(
+                    {"plan": f"A plan is required when subscription_status is '{self.subscription_status}'."}
+                )
+            if not self.subscription_expiry:
+                raise ValidationError(
+                    {"subscription_expiry": f"subscription_expiry must be set when subscription_status is '{self.subscription_status}'."}
+                )
+
     def has_active_trial(self):
         """Return True when the vendor is inside a valid trial window."""
         if not self.trial_end:
