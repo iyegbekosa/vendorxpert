@@ -201,7 +201,7 @@ Note: `error` is now an **array of strings** on this endpoint (one message per f
 
 ## 11. Product Object Field Renames (Breaking)
 
-The `ProductSerializer` response shape has changed. Three fields that previously exposed internal Django method names have been renamed to clean API-friendly names:
+The `ProductSerializer` response shape has changed. Two fields that previously exposed internal Django method names have been renamed to clean API-friendly names:
 
 | Old field name | New field name | Type |
 |----------------|----------------|------|
@@ -209,9 +209,130 @@ The `ProductSerializer` response shape has changed. Three fields that previously
 | `get_stock_display` | `stock_display` | string (`"in stock"` / `"out of stock"`) |
 | `display_price` | `display_price` | _(unchanged — already a clean name)_ |
 
-**Affected endpoints:** any endpoint that returns a product object — product listings, vendor store products, cart items, etc.
+**Affected endpoints:** any endpoint that returns a product object — product listings, vendor store products, cart items, order items, etc.
 
 **Action required:** Update all product rendering code to read `product.thumbnail` and `product.stock_display` instead of `product.get_thumbnail` and `product.get_stock_display`.
+
+---
+
+## 12. Password Reset Flow — OTP Is Now Single-Use (Behaviour Change)
+
+The password reset flow is now strictly single-use at each step.
+
+### Step 2: `POST /api/verify-reset-code/`
+
+Once this call succeeds and returns a `reset_token`, **the OTP code is immediately consumed**. Calling the same endpoint again with the same OTP will return:
+
+```json
+// 400
+{"error": "No pending verification found for this email."}
+```
+
+The user must request a **new OTP** via `POST /api/forgot-password/` if they want to retry.
+
+### Step 3: `POST /api/reset-password/`
+
+Once the password is changed successfully, the `reset_token` is **permanently deleted** from the backend. Attempting to reuse the same token returns:
+
+```json
+// 400
+{"error": "Invalid or expired reset token."}
+```
+
+**Action required:**
+- Do not cache the OTP or allow the user to "go back and verify again" without requesting a new one.
+- Do not store `reset_token` in session/local storage expecting it to survive multiple retries — it is valid for exactly one password change.
+- If the user abandons the reset midway (e.g. closes the tab), they must restart from `POST /api/forgot-password/`.
+
+### Full 3-step flow summary
+
+```
+POST /api/forgot-password/     → sends OTP email              → 200 { success: true }
+POST /api/verify-reset-code/   → validates OTP, issues token  → 200 { reset_token: "..." }
+POST /api/reset-password/      → consumes token, sets pw      → 200 { success: true }
+```
+
+Each step invalidates the credential used to reach it. The flow is strictly linear.
+
+---
+
+## 13. Checkout — Name Field Validation (New Errors)
+
+`POST /api/checkout/` now validates `first_name` and `last_name`:
+
+- Must not be blank (after stripping whitespace)
+- May only contain **letters, spaces, and hyphens** (no numbers, symbols, etc.)
+- Maximum **50 characters** each
+
+**New error response (400):**
+```json
+{
+  "first_name": ["First name may only contain letters, spaces, and hyphens."],
+  "last_name": ["Last name is required."]
+}
+```
+
+These errors follow the standard DRF field-error shape: an object where each key is a field name and the value is an array of error strings.
+
+**Action required:**
+- Display these field-level validation errors inline on the checkout form next to the relevant inputs.
+- Optionally add matching client-side validation (no numbers/symbols, max 50 chars) to fail fast before the API call.
+
+---
+
+## 14. Review Approve / Disapprove — Staff Only (Access Change)
+
+`GET /store/review/<pk>/approve/` and `GET /store/review/<pk>/disapprove/` now require `is_staff = True`. Non-staff authenticated users receive a redirect to the login page (302).
+
+Previously these endpoints only required the user to be logged in.
+
+**Action required:**
+- Any frontend admin UI (dashboard, review moderation panel) that calls these endpoints must verify `user.is_staff` before rendering the approve/disapprove controls.
+- If a non-staff user somehow triggers the request, handle the 302 redirect gracefully (treat as 403 and show an "access denied" message).
+
+---
+
+## 15. Admin URL Moved (Developer Note)
+
+The Django admin interface has moved from `/admin/` to `/xprt-admin/`.
+
+**Action required:** Update any bookmarks, internal tools, or documentation that links to `/admin/`. No end-user-facing change.
+
+---
+
+## 16. Subscription Plan Change — `payment_required` Response (Clarification)
+
+`POST /api/change_plan/` can return two distinct success shapes depending on whether a payment is needed:
+
+### Case A: No payment required (downgrade or same-cycle change)
+```json
+{
+  "message": "Plan downgraded successfully.",
+  "old_plan": "pro",
+  "new_plan": "basic",
+  "prorated_amount": 0,
+  "is_upgrade": false,
+  "payment_status": "completed"
+}
+```
+
+### Case B: Payment required (upgrade from trial, or mid-cycle upgrade)
+```json
+{
+  "message": "Plan upgraded successfully.",
+  "old_plan": "basic",
+  "new_plan": "pro",
+  "prorated_amount": 2500.00,
+  "is_upgrade": true,
+  "payment_status": "payment_required",
+  "authorization_url": "https://checkout.paystack.com/..."
+}
+```
+
+**Action required:**
+- Always check `payment_status` in the response.
+- If `payment_status === "payment_required"`, redirect the user to `authorization_url` (Paystack hosted checkout). The plan change only takes effect after the payment webhook confirms success.
+- If `payment_status === "completed"`, the plan is already active — show a success message and refresh the vendor's subscription state.
 
 ---
 
@@ -225,8 +346,9 @@ The `ProductSerializer` response shape has changed. Three fields that previously
 422 Unprocessable Entity      — Request valid but current state prevents it; body is {"error": "..."}
 429 Too Many Requests         — Rate limit hit; handle with Retry-After header
 500 Internal Server Error     — Unexpected server error; body is {"error": "An unexpected error occurred. Please try again."}
+502 Bad Gateway               — Paystack or upstream service failed; body is {"error": "..."}
 ```
 
 ---
 
-*Last updated: 2026-06-16. Backend branch: `audit/codebase-improvements`.*
+*Last updated: 2026-06-17. Backend branch: `audit/codebase-improvements`.*
