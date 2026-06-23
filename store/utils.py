@@ -2,8 +2,12 @@ import requests
 from django.conf import settings
 
 
+class PaystackError(Exception):
+    """Raised when the Paystack API returns a non-successful response."""
+
+
 def create_paystack_subaccount(vendor, account_number, bank_code):
-    url = "https://api.paystack.co/subaccount"
+    url = f"{settings.PAYSTACK_BASE_URL}/subaccount"
     headers = {
         "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
         "Content-Type": "application/json",
@@ -24,7 +28,7 @@ def create_paystack_subaccount(vendor, account_number, bank_code):
         vendor.save()
         return vendor.subaccount_code
     else:
-        raise Exception(f"Paystack error: {data.get('message')}")
+        raise PaystackError(f"Paystack error: {data.get('message')}")
 
 
 def retry_paystack_subaccount_creation(
@@ -40,7 +44,7 @@ def retry_paystack_subaccount_creation(
                 vendor, account_number, bank_code
             )
             return {"success": True, "subaccount_code": subaccount_code}
-        except Exception as e:
+        except (requests.RequestException, PaystackError) as e:
             if attempt == max_retries - 1:
                 return {"success": False, "error": str(e)}
             continue
@@ -52,7 +56,7 @@ def validate_paystack_subaccount(subaccount_code):
     """
     Validate if a Paystack subaccount is still active and properly configured.
     """
-    url = f"https://api.paystack.co/subaccount/{subaccount_code}"
+    url = f"{settings.PAYSTACK_BASE_URL}/subaccount/{subaccount_code}"
     headers = {
         "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
         "Content-Type": "application/json",
@@ -66,5 +70,5 @@ def validate_paystack_subaccount(subaccount_code):
             return {"valid": True, "data": data["data"]}
         else:
             return {"valid": False, "error": data.get("message")}
-    except Exception as e:
+    except requests.RequestException as e:
         return {"valid": False, "error": str(e)}

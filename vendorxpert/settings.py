@@ -24,7 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config("DEBUG", default=False, cast=bool)
 
 ALLOWED_HOSTS = [
     "vendorxpert.pythonanywhere.com",
@@ -181,6 +181,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "userprofile.UserProfile"
 
 PAYSTACK_SECRET_KEY = config("PAYSTACK_SECRET_KEY")
+PAYSTACK_BASE_URL = "https://api.paystack.co"
 
 ADMIN_SUBACCOUNT_CODE = config("ADMIN_SUBACCOUNT_CODE")
 
@@ -196,7 +197,18 @@ STORAGES = {
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-    )
+    ),
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "200/day",
+        "user": "1000/day",
+        "signup": "5/hour",
+        "login": "10/hour",
+        "password_reset": "5/hour",
+    },
 }
 
 

@@ -56,7 +56,7 @@ class Product(models.Model):
     price = models.BigIntegerField(
         validators=[MinValueValidator(1, message="Enter a valid price greater than 0.")]
     )
-    created_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     product_image = CloudinaryField(
         "image",
@@ -82,7 +82,7 @@ class Product(models.Model):
             "quality": "auto:good",
         },
     )
-    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default=ACTIVE)
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default=ACTIVE, db_index=True)
     stock = models.CharField(max_length=50, choices=STOCK_CHOICES, default=IN_STOCK)
     quantity = models.PositiveIntegerField(
         default=0, help_text="Available quantity in stock"
@@ -242,7 +242,7 @@ class Order(models.Model):
     is_paid = models.BooleanField(default=False)
     merchant_id = models.CharField(max_length=250)
     created_at = models.DateTimeField(auto_now_add=True)
-    ref = models.CharField(max_length=50)
+    ref = models.CharField(max_length=50, db_index=True)
 
 
 class OrderItem(models.Model):
@@ -250,7 +250,7 @@ class OrderItem(models.Model):
     product = models.ForeignKey(Product, related_name="item", on_delete=models.CASCADE)
     price = models.IntegerField()
     quantity = models.IntegerField(default=1)
-    fulfilled = models.BooleanField(default=False)
+    fulfilled = models.BooleanField(default=False, db_index=True)
 
     def display_price(self):
         return self.price / 100
@@ -287,14 +287,7 @@ class CartItem(models.Model):
         ordering = ["-updated_at"]
 
     def __str__(self):
-        # UserProfile uses `user_name` (and `email`) instead of `username`.
-        # Use a safe display name with fallbacks to avoid AttributeError.
-        user_display = (
-            getattr(self.user, "username", None)
-            or getattr(self.user, "user_name", None)
-            or getattr(self.user, "email", None)
-            or str(self.user)
-        )
+        user_display = getattr(self.user, "user_name", None) or getattr(self.user, "email", "unknown")
         return f"{user_display} - {self.product.title} ({self.quantity})"
 
     @property

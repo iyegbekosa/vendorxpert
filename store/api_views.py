@@ -332,11 +332,30 @@ def add_review_api(request, pk):
     Requires authentication. Creates a new review for the specified product.
     """
     product = get_object_or_404(Product, pk=pk)
+
+    vendor_profile = getattr(request.user, "vendor_profile", None)
+    if vendor_profile and product.vendor == vendor_profile:
+        return Response(
+            {"error": "You cannot review your own product."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    has_purchased = Order.objects.filter(
+        created_by=request.user,
+        is_paid=True,
+        items__product=product,
+    ).exists()
+    if not has_purchased:
+        return Response(
+            {"error": "You can only review products you have purchased."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     serializer = ReviewSerializer(data=request.data)
 
     if serializer.is_valid():
         user_profile = get_object_or_404(UserProfile, email=request.user.email)
-        review = serializer.save(product=product, author=user_profile)
+        serializer.save(product=product, author=user_profile)
         return Response({"success": True}, status=status.HTTP_201_CREATED)
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -525,6 +544,7 @@ def get_product_reviews_api(request, pk):
     tags=["Cart"],
 )
 @api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def cart_view_api(request):
     """
     Get the current cart contents.
@@ -593,6 +613,7 @@ def cart_view_api(request):
     tags=["Cart"],
 )
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def api_add_to_cart(request):
     """
     Add a product to the shopping cart.
@@ -606,6 +627,21 @@ def api_add_to_cart(request):
     if not product_id:
         return Response(
             {"success": False, "error": "Missing product_id"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        product = Product.objects.get(pk=product_id)
+    except Product.DoesNotExist:
+        return Response(
+            {"success": False, "error": "Product not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    vendor_profile = getattr(request.user, "vendor_profile", None)
+    if vendor_profile and product.vendor == vendor_profile:
+        return Response(
+            {"error": "You cannot add your own product to your cart."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -658,6 +694,7 @@ def api_add_to_cart(request):
     tags=["Cart"],
 )
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def api_remove_from_cart(request):
     """
     Remove a product completely from the cart.
@@ -715,6 +752,7 @@ def api_remove_from_cart(request):
     tags=["Cart"],
 )
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def api_change_quantity(request):
     """
     Increase or decrease the quantity of a product in the cart.
@@ -815,10 +853,18 @@ def checkout_api(request):
         vendor_totals = defaultdict(int)
         products_without_subaccount = []
 
+        buyer_vendor = getattr(request.user, "vendor_profile", None)
         for item in cart:
             product = item["product"]
             quantity = int(item["quantity"])
             price_kobo = int(round(float(product.price) * quantity * 100))
+
+            # Defensive backstop: no payout for buyer's own products
+            if buyer_vendor and product.vendor == buyer_vendor:
+                logger.info(
+                    f"Payment {ref}: skipping payout for self-purchased product {product.id}"
+                )
+                continue
 
             subaccount_code = product.vendor.subaccount_code
             if subaccount_code:
@@ -890,7 +936,7 @@ def checkout_api(request):
         logger.info(f"Payment {ref}: Sending payload to Paystack: {payload}")
 
         response = requests.post(
-            "https://api.paystack.co/transaction/initialize",
+            f"{settings.PAYSTACK_BASE_URL}/transaction/initialize",
             json=payload,
             headers=headers,
         )
@@ -985,7 +1031,7 @@ def paystack_callback_api(request):
     if not ref:
         return Response({"detail": "No transaction reference provided"}, status=400)
 
-    url = f"https://api.paystack.co/transaction/verify/{ref}"
+    url = f"{settings.PAYSTACK_BASE_URL}/transaction/verify/{ref}"
     headers = {"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"}
 
     try:
@@ -1076,7 +1122,7 @@ def paystack_webhook_api(request):
 
     if not hmac.compare_digest(computed_hash, signature):
         logger.warning("Invalid Paystack signature")
-        return Response(status=401)
+        return Response(status=403)
 
     try:
         data = json.loads(payload.decode("utf-8"))
@@ -1397,7 +1443,7 @@ def verify_payment_api(request):
         return Response({"success": False, "message": "Payment not found"}, status=404)
 
     # Verify with Paystack
-    url = f"https://api.paystack.co/transaction/verify/{reference}"
+    url = f"{settings.PAYSTACK_BASE_URL}/transaction/verify/{reference}"
     headers = {"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"}
 
     try:
@@ -1679,7 +1725,7 @@ def get_banks_api(request):
     No authentication required.
     """
     try:
-        url = "https://api.paystack.co/bank"
+        url = f"{settings.PAYSTACK_BASE_URL}/bank"
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
             "Content-Type": "application/json",
@@ -1797,7 +1843,7 @@ def verify_account_api(request):
         )
 
     try:
-        url = "https://api.paystack.co/bank/resolve"
+        url = f"{settings.PAYSTACK_BASE_URL}/bank/resolve"
         headers = {
             "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
             "Content-Type": "application/json",

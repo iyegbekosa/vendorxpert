@@ -231,6 +231,19 @@ class VendorProfile(models.Model):
     def __str__(self):
         return f"{self.store_name} (Vendor: {self.user.user_name})"
 
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        paid_statuses = {"active", "grace", "defaulted"}
+        if self.subscription_status in paid_statuses:
+            if not self.plan:
+                raise ValidationError(
+                    {"plan": f"A plan is required when subscription_status is '{self.subscription_status}'."}
+                )
+            if not self.subscription_expiry:
+                raise ValidationError(
+                    {"subscription_expiry": f"subscription_expiry must be set when subscription_status is '{self.subscription_status}'."}
+                )
+
     def has_active_trial(self):
         """Return True when the vendor is inside a valid trial window."""
         if not self.trial_end:
@@ -311,7 +324,7 @@ class VendorProfile(models.Model):
             and now <= self.subscription_expiry + timedelta(days=7)
         )
 
-    def start_trial(self, days=14):
+    def start_trial(self, days=30):
         """Start a trial period for the vendor"""
         self.subscription_status = "trial"
         self.trial_start = timezone.now()
@@ -366,209 +379,12 @@ class VendorProfile(models.Model):
         return True
 
     def change_plan_with_payment(self, new_plan, immediate=False, request=None):
-        """Enhanced change plan method with payment processing"""
-        from django.conf import settings
-        from django.urls import reverse
-        import uuid
-        import requests
-
-        if not new_plan or new_plan == self.plan:
-
-            return {"success": False, "error": "Invalid plan or already on this plan."}
-
-        old_plan = self.plan
-        is_upgrade = new_plan.price > (old_plan.price if old_plan else 0)
-
-        # Calculate prorated amount if changing mid-cycle
-        prorated_amount = 0
-        requires_payment = False
-
-        # Special case: Trial users upgrading to MORE expensive paid plans must pay immediately
-        if self.subscription_status == "trial" and is_upgrade and new_plan.price > 0:
-
-            prorated_amount = new_plan.price  # Full monthly amount, not prorated
-            requires_payment = True
-
-        elif self.subscription_status == "trial" and not is_upgrade:
-
-            prorated_amount = 0
-            requires_payment = False
-        elif self.subscription_expiry and not immediate:
-            days_remaining = self.get_subscription_days_remaining()
-
-            if days_remaining > 0:
-                daily_old_rate = (old_plan.price if old_plan else 0) / 30
-                daily_new_rate = new_plan.price / 30
-                prorated_amount = (daily_new_rate - daily_old_rate) * days_remaining
-
-                # Only require payment for upgrades with positive prorated amount
-                requires_payment = is_upgrade and prorated_amount > 0
-
-        else:
-            pass
-
-        # If payment is required, process it through Paystack
-        if requires_payment and request:
-
-            try:
-                # Generate unique reference for the prorated payment
-                ref = str(uuid.uuid4()).replace("-", "")[:20]
-
-                # Create Paystack transaction for prorated amount
-                callback_url = f"{request.scheme}://{request.get_host()}{reverse('paystack_callback')}"
-
-                payload = {
-                    "email": self.user.email,
-                    "amount": int(prorated_amount * 100),  # Convert to kobo
-                    "reference": ref,
-                    "callback_url": callback_url,
-                    "metadata": {
-                        "type": "plan_change",
-                        "vendor_id": self.id,
-                        "old_plan_id": old_plan.id if old_plan else None,
-                        "new_plan_id": new_plan.id,
-                        "prorated_amount": prorated_amount,
-                        "is_trial_upgrade": self.subscription_status == "trial",
-                    },
-                }
-
-                headers = {
-                    "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
-                    "Content-Type": "application/json",
-                }
-
-                response = requests.post(
-                    "https://api.paystack.co/transaction/initialize",
-                    json=payload,
-                    headers=headers,
-                    timeout=30,
-                )
-
-                if response.status_code != 200:
-
-                    raise Exception("Failed to initialize payment with Paystack")
-
-                response_data = response.json()
-
-                if not response_data.get("status"):
-                    error_msg = response_data.get(
-                        "message", "Payment initialization failed"
-                    )
-
-                    raise Exception(error_msg)
-
-                # Store the pending change details
-
-                self.pending_ref = ref
-                self.save()
-
-                # Log the pending change
-
-                SubscriptionHistory.log_event(
-                    vendor=self,
-                    event_type="plan_upgraded" if is_upgrade else "plan_downgraded",
-                    previous_plan=old_plan,
-                    new_plan=new_plan,
-                    amount=prorated_amount,
-                    payment_reference=ref,
-                    notes=f"Plan change initiated from {old_plan.name if old_plan else 'None'} to {new_plan.name} - Payment pending",
-                )
-
-                auth_url = response_data["data"]["authorization_url"]
-
-                return {
-                    "success": True,
-                    "prorated_amount": prorated_amount,
-                    "is_upgrade": is_upgrade,
-                    "old_plan": old_plan.name if old_plan else None,
-                    "new_plan": new_plan.name,
-                    "authorization_url": auth_url,
-                    "payment_status": "payment_required",
-                }
-
-            except requests.Timeout:
-
-                raise Exception("Payment service timeout. Please try again.")
-            except requests.RequestException as e:
-
-                raise Exception(f"Payment service error: {str(e)}")
-            except Exception as e:
-
-                raise Exception(f"Payment processing failed: {str(e)}")
-
-        # If no payment required, process the change immediately
-        else:
-
-            # Update Paystack subscription if vendor has one
-            if self.paystack_subscription_code and new_plan.paystack_plan_code:
-
-                try:
-                    self._update_paystack_subscription(new_plan)
-
-                except Exception as e:
-                    logger.error(f"Failed to update Paystack subscription for vendor {self.id}: {e}")
-
-          
-            self.plan = new_plan
-            self.save()
-
-            # Log the successful change
-          
-            event_type = "plan_upgraded" if is_upgrade else "plan_downgraded"
-            SubscriptionHistory.log_event(
-                vendor=self,
-                event_type=event_type,
-                previous_plan=old_plan,
-                new_plan=new_plan,
-                amount=prorated_amount,
-                notes=f"Plan changed from {old_plan.name if old_plan else 'None'} to {new_plan.name}",
-            )
-
-            result = {
-                "success": True,
-                "prorated_amount": prorated_amount,
-                "is_upgrade": is_upgrade,
-                "old_plan": old_plan.name if old_plan else None,
-                "new_plan": new_plan.name,
-                "payment_status": "completed",
-            }
-
-           
-            return result
+        from .services import change_plan_with_payment as _svc
+        return _svc(self, new_plan, immediate=immediate, request=request)
 
     def _update_paystack_subscription(self, new_plan):
-        """Update Paystack subscription to new plan"""
-        from django.conf import settings
-        import requests
-
-       
-        if not self.paystack_subscription_code or not new_plan.paystack_plan_code:
-          
-            return
-
-        headers = {
-            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
-            "Content-Type": "application/json",
-        }
-
-        payload = {
-            "plan": new_plan.paystack_plan_code,
-        }
-
-       
-        response = requests.put(
-            f"https://api.paystack.co/subscription/{self.paystack_subscription_code}",
-            json=payload,
-            headers=headers,
-            timeout=30,
-        )
-
-      
-        if response.status_code != 200:
-            
-            raise Exception(f"Failed to update Paystack subscription: {response.text}")
-
-       
+        from .services import update_paystack_subscription as _svc
+        return _svc(self, new_plan)
 
     def extend_subscription(self, days=30):
         """Extend subscription by specified days"""

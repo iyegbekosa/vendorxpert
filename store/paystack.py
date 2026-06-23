@@ -1,9 +1,10 @@
 from django.conf import settings
 import requests
 
+
 class Paystack:
     PAYSTACK_SK = settings.PAYSTACK_SECRET_KEY
-    base_url = "https://api.paystack.co/"
+    base_url = settings.PAYSTACK_BASE_URL + "/"
 
     def verify_payment(self, ref, *args, **kwargs):
         path = f'transaction/verify/{ref}'

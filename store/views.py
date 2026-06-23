@@ -2,6 +2,7 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.db.models import Q
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.admin.views.decorators import staff_member_required
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse, HttpResponse
 from .models import Product, Category, Review, OrderItem, Order, Payment
@@ -85,7 +86,7 @@ def delete_review(request, review_id):
     )
 
 
-@login_required
+@staff_member_required
 def review_approve(request, pk):
     review = get_object_or_404(Review, pk=pk)
     review.approve()
@@ -96,7 +97,7 @@ def review_approve(request, pk):
     )
 
 
-@login_required
+@staff_member_required
 def review_disapprove(request, pk):
     review = get_object_or_404(Review, pk=pk)
     review.disapprove()
@@ -238,7 +239,7 @@ def checkout(request):
             }
 
             response = requests.post(
-                "https://api.paystack.co/transaction/initialize",
+                f"{settings.PAYSTACK_BASE_URL}/transaction/initialize",
                 json=payload,
                 headers=headers,
             )
@@ -273,7 +274,7 @@ def paystack_callback(request):
     if not ref:
         return HttpResponse("No transaction reference provided", status=400)
 
-    url = f"https://api.paystack.co/transaction/verify/{ref}"
+    url = f"{settings.PAYSTACK_BASE_URL}/transaction/verify/{ref}"
     headers = {"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"}
 
     try:
