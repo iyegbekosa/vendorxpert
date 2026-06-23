@@ -118,6 +118,7 @@ def resubscribe_api(request):
 
     payload = {
         "email": user.email,
+        "amount": selected_plan.price * 100,  # NGN → kobo
         "plan": selected_plan.paystack_plan_code,
         "reference": ref,
         "callback_url": callback_url,
