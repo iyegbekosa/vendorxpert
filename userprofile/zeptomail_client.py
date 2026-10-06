@@ -141,28 +141,28 @@ class ZeptoMailClient:
             return False
 
 
-# Global ZeptoMail client instance
-zeptomail_client = ZeptoMailClient()
+_client = None
+
+
+def _get_client():
+    """Create the client on first use so a missing API key disables email
+    (with an error in the logs) instead of crashing the whole application."""
+    global _client
+    if _client is None:
+        _client = ZeptoMailClient()
+    return _client
 
 
 def send_zeptomail(
     to_email, subject, template_name, context, from_email=None, from_name=None
 ):
-    """
-    Convenience function to send email via ZeptoMail
-
-    Args:
-        to_email (str): Recipient email address
-        subject (str): Email subject
-        template_name (str): Template name (without extension)
-        context (dict): Template context
-        from_email (str, optional): Override sender email
-        from_name (str, optional): Override sender name
-
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    return zeptomail_client.send_template_email(
+    """Send a templated email. Returns True on success, False otherwise."""
+    try:
+        client = _get_client()
+    except ValueError as exc:
+        logger.error("Email disabled: %s", exc)
+        return False
+    return client.send_template_email(
         to_email=to_email,
         subject=subject,
         template_name=template_name,

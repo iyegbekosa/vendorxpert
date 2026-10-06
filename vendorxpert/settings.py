@@ -10,8 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+from datetime import timedelta
 from pathlib import Path
-from decouple import config
+
+from decouple import Csv, config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -35,14 +37,9 @@ ALLOWED_HOSTS = [
     "127.0.0.1",
 ]
 
-
-CART_SESSION_ID = "cart"
-SESSION_COOKIE_AGE = 86400
-
-
-LOGIN_URL = "login"
-LOGOUT_REDIRECT_URL = "frontpage"
-LOGIN_REDIRECT_URL = "frontpage"
+# Public URL of the Next.js frontend. Paystack redirects buyers and vendors
+# back here after payment, so it must match the deployed frontend.
+FRONTEND_URL = config("FRONTEND_URL", default="https://vendorxprt.com").rstrip("/")
 
 
 # Application definition
@@ -62,7 +59,6 @@ INSTALLED_APPS = [
     "core",
     "store",
     "phonenumber_field",
-    "django.contrib.humanize",
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
@@ -94,13 +90,13 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                "store.context_processors.cart",
             ],
         },
     },
 ]
 
 WSGI_APPLICATION = "vendorxpert.wsgi.application"
+TEST_RUNNER = "vendorxpert.test_runner.NoNetworkTestRunner"
 
 
 # Database
@@ -110,6 +106,9 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        # Wait for concurrent writers instead of failing immediately with
+        # "database is locked" during payment/webhook bursts.
+        "OPTIONS": {"timeout": 20},
     }
 }
 
@@ -123,6 +122,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 8},
     },
     {
         "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
@@ -149,10 +149,6 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = "/static/"
-
-STATICFILES_DIRS = [
-    BASE_DIR / "static",
-]
 
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
@@ -182,6 +178,9 @@ AUTH_USER_MODEL = "userprofile.UserProfile"
 
 PAYSTACK_SECRET_KEY = config("PAYSTACK_SECRET_KEY")
 PAYSTACK_BASE_URL = "https://api.paystack.co"
+# Seconds to wait for Paystack before giving up. Without a timeout a slow
+# gateway ties up a worker indefinitely.
+PAYSTACK_TIMEOUT_SECONDS = config("PAYSTACK_TIMEOUT_SECONDS", default=20, cast=int)
 
 ADMIN_SUBACCOUNT_CODE = config("ADMIN_SUBACCOUNT_CODE")
 
@@ -202,17 +201,31 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
     ],
+    # Students on campus Wi-Fi share a handful of public IPs, so the anonymous
+    # browsing limit must be generous; the sensitive endpoints below carry
+    # their own much tighter scopes.
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "200/day",
-        "user": "1000/day",
-        "signup": "5/hour",
-        "login": "10/hour",
+        "anon": "300/hour",
+        "user": "2000/hour",
+        "signup": "10/hour",
+        "login": "20/hour",
         "password_reset": "5/hour",
+        "otp_verify": "20/hour",
+        "otp_resend": "5/hour",
+        "bank_lookup": "30/hour",
     },
+    "EXCEPTION_HANDLER": "vendorxpert.exceptions.api_exception_handler",
+    "DEFAULT_RENDERER_CLASSES": ["vendorxpert.exceptions.ApiJSONRenderer"]
+    + (["rest_framework.renderers.BrowsableAPIRenderer"] if DEBUG else []),
 }
 
 
 def _patch_django_template_context_copy():
+    """Work around Django 4.2 template Context.__copy__ on Python 3.14.
+
+    Python 3.14 changed how copy() interacts with super() in BaseContext,
+    which breaks template rendering (used by transactional emails).
+    """
     from django.template.context import BaseContext
 
     def _safe_copy(self):
@@ -225,9 +238,6 @@ def _patch_django_template_context_copy():
 
 
 _patch_django_template_context_copy()
-
-# JWT Settings
-from datetime import timedelta
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
@@ -245,15 +255,15 @@ SIMPLE_JWT = {
     "TOKEN_TYPE_CLAIM": "token_type",
 }
 
-# CORS settings for frontend integration
+# CORS settings for frontend integration. Local/LAN origins are added through
+# EXTRA_CORS_ALLOWED_ORIGINS so they never ship enabled in production.
 CORS_ALLOWED_ORIGINS = [
     "https://vendorxprt.com",
     "https://www.vendorxprt.com",
     "https://staging.vendorxprt.com",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://192.168.0.114:3000",
-]
+] + config("EXTRA_CORS_ALLOWED_ORIGINS", default="", cast=Csv())
+if DEBUG:
+    CORS_ALLOWED_ORIGINS += ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -326,3 +336,39 @@ SERVER_EMAIL = config("SERVER_EMAIL", default=EMAIL_HOST_USER)
 # ZeptoMail Configuration
 ZEPTOMAIL_API_KEY = config("ZEPTOMAIL_API_KEY", default="")
 ZEPTOMAIL_FROM_NAME = config("ZEPTOMAIL_FROM_NAME", default="VendorXprt")
+# Must be a sender address verified in the ZeptoMail dashboard, otherwise
+# every transactional email (OTP codes, receipts) is rejected.
+ZEPTOMAIL_FROM_EMAIL = config("ZEPTOMAIL_FROM_EMAIL", default="noreply@vendorxprt.com")
+
+# Public API docs are useful in development but expose the full attack
+# surface in production.
+ENABLE_API_DOCS = config("ENABLE_API_DOCS", default=DEBUG, cast=bool)
+
+# ── Production security hardening ───────────────────────────────────────────
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=60 * 60 * 24 * 30, cast=int)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+    X_FRAME_OPTIONS = "DENY"
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "standard"},
+    },
+    "root": {"handlers": ["console"], "level": config("LOG_LEVEL", default="INFO")},
+    "loggers": {
+        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
+}
