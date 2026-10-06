@@ -15,6 +15,8 @@ The contract is applied in two places so that no view can bypass it:
   e.g. ``Response(serializer.errors, status=400)``.
 """
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework import exceptions as drf_exceptions
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import exception_handler
 
@@ -87,6 +89,10 @@ def normalize_error_payload(data):
 
 
 def api_exception_handler(exc, context):
+    if isinstance(exc, DjangoValidationError):
+        # Model validation (e.g. full_clean in save) is a client error, not a 500.
+        detail = exc.message_dict if hasattr(exc, "error_dict") else exc.messages
+        exc = drf_exceptions.ValidationError(detail)
     response = exception_handler(exc, context)
     if response is None:
         return None

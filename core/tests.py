@@ -29,3 +29,14 @@ class SeedDemoTests(TestCase):
     def test_refuses_to_run_in_production(self):
         with self.assertRaises(CommandError):
             self.seed()
+
+
+class ErrorContractTests(TestCase):
+    def test_model_validation_errors_become_400(self):
+        from django.core.exceptions import ValidationError
+        from vendorxpert.exceptions import api_exception_handler
+
+        response = api_exception_handler(ValidationError({"title": ["Too long."]}), {})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["fields"], {"title": ["Too long."]})
+        self.assertEqual(response.data["error"], "Too long.")
