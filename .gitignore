@@ -193,3 +193,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .env
+
+# Local media uploads (production media lives on Cloudinary)
+media/
