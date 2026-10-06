@@ -49,6 +49,7 @@ class VendorProfileAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "plan",
+                    "scheduled_plan",
                     "subscription_status",
                     "subscription_start",
                     "subscription_expiry",
@@ -56,6 +57,8 @@ class VendorProfileAdmin(admin.ModelAdmin):
                     "trial_end",
                     "last_payment_date",
                     "subscription_token",
+                    "paystack_subscription_code",
+                    "paystack_customer_code",
                 )
             },
         ),

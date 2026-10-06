@@ -286,6 +286,7 @@
         <div class="total-section">
             <h3>💰 Total Amount Paid</h3>
             <div class="total-amount">₦{{ total_amount|floatformat:2 }}</div>
+            <p>Items ₦{{ subtotal|floatformat:2 }} + payment processing fee ₦{{ service_fee|floatformat:2 }}</p>
             <p>Payment processed successfully via Paystack</p>
         </div>
         

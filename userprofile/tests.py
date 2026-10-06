@@ -1,261 +1,337 @@
+from datetime import timedelta
+from unittest.mock import patch
+
 from django.test import TestCase
 from django.utils import timezone
-from datetime import timedelta
-from unittest.mock import patch, MagicMock
-
 from rest_framework import serializers
 from rest_framework.test import APITestCase
-from rest_framework import status
 
-from .models import UserProfile, VendorProfile, VendorPlan, SubscriptionHistory
-from .phone_utils import normalize_and_validate_nigerian_phone
+from store import paystack
 from store.utils import PaystackError
+from vendorxpert.testing import make_plan, make_user, make_vendor, signed_webhook
 
+from . import services
+from .models import EmailVerification, SubscriptionHistory, UserProfile, VendorProfile, selling_access_q
+from .phone_utils import normalize_and_validate_nigerian_phone
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def make_user(email="test@example.com", username="testuser"):
-    return UserProfile.objects.create_user(
-        email=email,
-        user_name=username,
-        first_name="Test",
-        last_name="User",
-        password="strongpass123",
-    )
-
-
-def make_basic_plan():
-    return VendorPlan.objects.create(
-        name=VendorPlan.BASIC,
-        price=2000,
-        is_active=True,
-        description="Basic plan",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Phone utility
-# ---------------------------------------------------------------------------
 
 class PhoneUtilsTests(TestCase):
-    """Unit tests for normalize_and_validate_nigerian_phone."""
+    def test_local_and_international_formats_normalise(self):
+        for raw in ("09012345678", "+2349012345678", "090 1234 5678", "090-1234-5678"):
+            self.assertEqual(normalize_and_validate_nigerian_phone(raw), "+2349012345678")
 
-    def test_local_11_digit_converted_to_international(self):
-        result = normalize_and_validate_nigerian_phone("09012345678")
-        self.assertEqual(result, "+2349012345678")
-
-    def test_international_format_accepted_unchanged(self):
-        result = normalize_and_validate_nigerian_phone("+2349012345678")
-        self.assertEqual(result, "+2349012345678")
-
-    def test_spaces_stripped_before_validation(self):
-        result = normalize_and_validate_nigerian_phone("090 1234 5678")
-        self.assertEqual(result, "+2349012345678")
-
-    def test_dashes_stripped_before_validation(self):
-        result = normalize_and_validate_nigerian_phone("090-1234-5678")
-        self.assertEqual(result, "+2349012345678")
-
-    def test_too_short_raises_validation_error(self):
-        with self.assertRaises(serializers.ValidationError):
-            normalize_and_validate_nigerian_phone("0901234567")  # 10 digits (one short)
-
-    def test_too_long_raises_validation_error(self):
-        with self.assertRaises(serializers.ValidationError):
-            normalize_and_validate_nigerian_phone("090123456789")  # 12 digits (one long)
-
-    def test_non_numeric_raises_validation_error(self):
-        with self.assertRaises(serializers.ValidationError):
-            normalize_and_validate_nigerian_phone("not-a-phone-number")
-
-    def test_custom_field_label_appears_in_error_message(self):
-        try:
-            normalize_and_validate_nigerian_phone("bad", "WhatsApp number")
-            self.fail("Expected ValidationError")
-        except serializers.ValidationError as exc:
-            self.assertIn("WhatsApp number", str(exc.detail))
+    def test_invalid_numbers_rejected(self):
+        for raw in ("0901234567", "090123456789", "not-a-phone"):
+            with self.assertRaises(serializers.ValidationError):
+                normalize_and_validate_nigerian_phone(raw)
 
 
-# ---------------------------------------------------------------------------
-# Vendor registration API
-# ---------------------------------------------------------------------------
+class SellingAccessTests(TestCase):
+    """``has_selling_access`` and ``selling_access_q`` must always agree."""
+
+    def test_python_and_database_rules_match(self):
+        now = timezone.now()
+        scenarios = {
+            "trial_running": dict(status="trial", trial_start=now - timedelta(days=1), trial_end=now + timedelta(days=5)),
+            "trial_over": dict(status="trial", trial_start=now - timedelta(days=40), trial_end=now - timedelta(days=1)),
+            "active": dict(status="active", subscription_expiry=now + timedelta(days=3)),
+            "in_grace": dict(status="active", subscription_expiry=now - timedelta(days=3)),
+            "lapsed": dict(status="active", subscription_expiry=now - timedelta(days=30)),
+            "cancelled_paid_up": dict(status="cancelled", subscription_expiry=now + timedelta(days=3)),
+            "cancelled_over": dict(status="cancelled", subscription_expiry=now - timedelta(days=1)),
+            "defaulted": dict(status="defaulted", subscription_expiry=now - timedelta(days=1)),
+        }
+        expected = {"trial_running", "active", "in_grace", "cancelled_paid_up"}
+        vendors = {name: make_vendor(**kwargs) for name, kwargs in scenarios.items()}
+
+        in_db = set(VendorProfile.objects.filter(selling_access_q()).values_list("pk", flat=True))
+        for name, vendor in vendors.items():
+            self.assertEqual(vendor.has_selling_access(), name in expected, name)
+            self.assertEqual(vendor.pk in in_db, name in expected, name)
+
+
+@patch("userprofile.auth_api.send_verification_email", return_value=True)
+class SignupFlowTests(APITestCase):
+    payload = {
+        "user_name": "ada",
+        "email": "Ada@Example.com",
+        "first_name": "Ada",
+        "last_name": "Obi",
+        "password": "Campus-market-42",
+    }
+
+    def test_signup_normalises_email_and_verification_signs_in(self, _):
+        response = self.client.post("/api/signup/", self.payload, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        code = EmailVerification.objects.get(email="ada@example.com").code
+
+        with patch("userprofile.auth_api.send_welcome_email", return_value=True):
+            response = self.client.post(
+                "/api/verify-signup/", {"email": "ADA@example.com", "code": code}, format="json"
+            )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertIn("access", response.data)
+        self.assertTrue(UserProfile.objects.filter(email="ada@example.com").exists())
+
+    def test_weak_password_rejected(self, _):
+        response = self.client.post("/api/signup/", {**self.payload, "password": "12345678"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("password", response.data["fields"])
+
+    def test_code_locks_after_too_many_wrong_attempts(self, _):
+        self.client.post("/api/signup/", self.payload, format="json")
+        verification = EmailVerification.objects.get(email="ada@example.com")
+        wrong = "000000" if verification.code != "000000" else "111111"
+        for _attempt in range(EmailVerification.MAX_ATTEMPTS):
+            self.client.post("/api/verify-signup/", {"email": "ada@example.com", "code": wrong}, format="json")
+
+        response = self.client.post(
+            "/api/verify-signup/", {"email": "ada@example.com", "code": verification.code}, format="json"
+        )
+        self.assertEqual(response.data["code"], "code_locked")
+        self.assertFalse(UserProfile.objects.filter(email="ada@example.com").exists())
+
+    def test_email_failure_is_reported_not_hidden(self, send):
+        send.return_value = False
+        response = self.client.post("/api/signup/", self.payload, format="json")
+        self.assertEqual(response.status_code, 503)
+
+
+class LoginAndResetTests(APITestCase):
+    def setUp(self):
+        self.user = make_user(email="kemi@example.com")
+
+    def test_login_is_case_insensitive(self):
+        response = self.client.post(
+            "/api/login", {"email": "KEMI@example.com", "password": "Str0ng-pass-123"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["is_vendor"])
+
+    def test_wrong_password_uses_error_contract(self):
+        response = self.client.post("/api/login", {"email": "kemi@example.com", "password": "x"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "invalid_credentials")
+
+    @patch("userprofile.auth_api.send_password_reset_email", return_value=True)
+    def test_forgot_password_does_not_reveal_accounts(self, send):
+        known = self.client.post("/api/forgot-password/", {"email": "kemi@example.com"}, format="json")
+        unknown = self.client.post("/api/forgot-password/", {"email": "nobody@example.com"}, format="json")
+        self.assertEqual(known.data, unknown.data)
+        send.assert_called_once()
+
+    @patch("userprofile.auth_api.send_password_reset_email", return_value=True)
+    def test_full_reset_flow_revokes_old_sessions(self, _):
+        login = self.client.post(
+            "/api/login", {"email": "kemi@example.com", "password": "Str0ng-pass-123"}, format="json"
+        )
+        old_refresh = login.data["refresh"]
+
+        self.client.post("/api/forgot-password/", {"email": "kemi@example.com"}, format="json")
+        code = EmailVerification.objects.get(email="kemi@example.com").code
+        token = self.client.post(
+            "/api/verify-reset-code/", {"email": "kemi@example.com", "code": code}, format="json"
+        ).data["reset_token"]
+        response = self.client.post(
+            "/api/reset-password/",
+            {"email": "kemi@example.com", "reset_token": token, "new_password": "New-campus-pass-9"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+        refresh = self.client.post("/api/token/refresh/", {"refresh_token": old_refresh}, format="json")
+        self.assertEqual(refresh.status_code, 401)
+        replay = self.client.post(
+            "/api/reset-password/",
+            {"email": "kemi@example.com", "reset_token": token, "new_password": "Another-pass-77"},
+            format="json",
+        )
+        self.assertEqual(replay.status_code, 400)
+
+    def test_token_obtain_endpoint_that_bypassed_throttling_is_gone(self):
+        response = self.client.post("/api/token/", {"email": "kemi@example.com", "password": "x"})
+        self.assertEqual(response.status_code, 404)
+
 
 VENDOR_POST_DATA = {
     "store_name": "Test Store",
     "account_number": "1234567890",
     "bank_code": "044",
     "phone_number": "09012345678",
-    "whatsapp_number": "09012345679",
 }
 
 
-class VendorRegistrationAPITests(APITestCase):
-    """Integration tests for POST /api/register-vendor/."""
-
+@patch("userprofile.vendor_api.send_vendor_welcome_email", return_value=True)
+class VendorRegistrationTests(APITestCase):
     def setUp(self):
         self.user = make_user()
-        self.client.force_authenticate(user=self.user)
-        self.plan = make_basic_plan()
-        self.url = "/api/register-vendor/"
+        make_plan()
+        self.client.force_authenticate(self.user)
 
-    @patch("userprofile.serializers.create_paystack_subaccount")
-    @patch("userprofile.api_views.send_vendor_welcome_email")
-    def test_happy_path_creates_vendor_profile(self, mock_email, mock_paystack):
-        mock_paystack.return_value = {"subaccount_code": "ACCT_testcode"}
-        resp = self.client.post(self.url, VENDOR_POST_DATA, format="json")
+    @patch("userprofile.serializers.create_paystack_subaccount", return_value="ACCT_x")
+    def test_registration_starts_trial(self, *_):
+        response = self.client.post("/api/register-vendor/", VENDOR_POST_DATA, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        vendor = VendorProfile.objects.get(user=self.user)
+        self.assertTrue(vendor.has_active_trial())
+        self.assertEqual(response.data["store_details"]["subscription_status"], "trial")
 
-        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(resp.data["success"])
-        self.assertTrue(UserProfile.objects.get(pk=self.user.pk).is_vendor)
-        self.assertTrue(VendorProfile.objects.filter(user=self.user).exists())
-
-    def test_unauthenticated_request_rejected(self):
-        self.client.force_authenticate(user=None)
-        resp = self.client.post(self.url, VENDOR_POST_DATA, format="json")
-        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
-
-    @patch("userprofile.serializers.create_paystack_subaccount")
-    @patch("userprofile.api_views.send_vendor_welcome_email")
-    def test_already_registered_with_subaccount_returns_400(self, mock_email, mock_paystack):
-        # Create a fully-registered vendor (has subaccount_code).
-        VendorProfile.objects.create(
-            user=self.user,
-            store_name="Existing Store",
-            store_description="Desc",
-            subaccount_code="ACCT_existing",
-        )
-        self.user.is_vendor = True
-        self.user.save()
-
-        resp = self.client.post(self.url, VENDOR_POST_DATA, format="json")
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("already registered", str(resp.data).lower())
-
-    @patch("userprofile.serializers.create_paystack_subaccount")
-    @patch("userprofile.api_views.send_vendor_welcome_email")
-    def test_orphaned_vendor_cleaned_up_and_retry_succeeds(self, mock_email, mock_paystack):
-        # Simulate a previous failed registration: VendorProfile exists but
-        # subaccount_code is NULL (Paystack setup never completed).
-        VendorProfile.objects.create(
-            user=self.user,
-            store_name="Orphaned Store",
-            store_description="Desc",
-            subaccount_code=None,
-        )
-        mock_paystack.return_value = {"subaccount_code": "ACCT_new"}
-
-        resp = self.client.post(self.url, VENDOR_POST_DATA, format="json")
-
-        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        # Only one VendorProfile should exist (the new one, not the orphan).
-        self.assertEqual(VendorProfile.objects.filter(user=self.user).count(), 1)
-
-    @patch("userprofile.serializers.create_paystack_subaccount")
-    @patch("userprofile.api_views.send_vendor_welcome_email")
-    def test_paystack_failure_rolls_back_vendor_creation(self, mock_email, mock_paystack):
-        mock_paystack.side_effect = PaystackError("Bank account not found")
-
-        resp = self.client.post(self.url, VENDOR_POST_DATA, format="json")
-
-        # View catches DRFValidationError from serializer and returns 400.
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        # VendorProfile must have been deleted and is_vendor reset.
+    @patch("userprofile.serializers.create_paystack_subaccount", side_effect=PaystackError("bad"))
+    def test_paystack_failure_leaves_no_half_created_store(self, *_):
+        response = self.client.post("/api/register-vendor/", VENDOR_POST_DATA, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("account_number", response.data["fields"])
         self.assertFalse(VendorProfile.objects.filter(user=self.user).exists())
         self.user.refresh_from_db()
         self.assertFalse(self.user.is_vendor)
 
-    @patch("userprofile.serializers.create_paystack_subaccount")
-    @patch("userprofile.api_views.send_vendor_welcome_email")
-    def test_duplicate_phone_number_from_registered_vendor_blocked(self, mock_email, mock_paystack):
-        # Another user with a fully-registered vendor profile using the same phone.
-        other_user = make_user("other@example.com", "otheruser")
-        VendorProfile.objects.create(
-            user=other_user,
-            store_name="Other Store",
-            store_description="Desc",
-            phone_number="+2349012345678",
-            subaccount_code="ACCT_other",  # fully registered
-        )
+    def test_logo_url_is_not_fetched_server_side(self, _):
+        with patch("userprofile.serializers.create_paystack_subaccount", return_value="ACCT_x"):
+            self.client.post(
+                "/api/register-vendor/",
+                {**VENDOR_POST_DATA, "store_logo": "http://169.254.169.254/latest/meta-data"},
+                format="json",
+            )
+        # The test runner blocks outbound HTTP, so reaching this line means no
+        # fetch was attempted; the URL must also never become the logo.
+        vendor = VendorProfile.objects.filter(user=self.user).first()
+        self.assertTrue(vendor is None or not vendor.store_logo)
 
-        resp = self.client.post(self.url, VENDOR_POST_DATA, format="json")
-
-        self.assertIn(resp.status_code, [
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        ])
+    def test_existing_vendor_gets_conflict(self, _):
+        make_vendor(user=self.user)
+        response = self.client.post("/api/register-vendor/", VENDOR_POST_DATA, format="json")
+        self.assertEqual(response.status_code, 409)
 
 
-# ---------------------------------------------------------------------------
-# Subscription service layer
-# ---------------------------------------------------------------------------
-
-class ChangePlanServiceTests(TestCase):
-    """Unit tests for userprofile.services.change_plan_with_payment."""
-
+class SubscriptionTests(TestCase):
     def setUp(self):
-        self.user = make_user()
-        self.basic_plan = make_basic_plan()
-        self.pro_plan = VendorPlan.objects.create(
-            name=VendorPlan.PRO,
-            price=5000,
-            is_active=True,
-            paystack_plan_code="PLN_pro",
-        )
-        self.vendor = VendorProfile.objects.create(
-            user=self.user,
-            store_name="My Store",
-            store_description="Great store",
-            plan=self.basic_plan,
-            subscription_status="active",
-            subscription_expiry=timezone.now() + timedelta(days=20),
-        )
+        self.basic = make_plan("basic", 3000, 6, "PLN_basic")
+        self.premium = make_plan("premium", 5000, 12, "PLN_premium")
+        self.vendor = make_vendor(plan=self.basic)
 
-    def test_same_plan_returns_error(self):
-        from .services import change_plan_with_payment
-        result = change_plan_with_payment(self.vendor, self.basic_plan)
-        self.assertFalse(result["success"])
-        self.assertIn("already on this plan", result["error"])
-
-    def test_downgrade_applied_immediately_without_payment(self):
-        from .services import change_plan_with_payment
-
-        free_plan = VendorPlan.objects.create(
-            name=VendorPlan.FREE, price=0, is_active=True
-        )
-        # Downgrade: new plan is cheaper, no payment required.
-        result = change_plan_with_payment(self.vendor, free_plan)
-
-        self.assertTrue(result["success"])
-        self.assertEqual(result["payment_status"], "completed")
+    @patch.object(paystack, "initialize_transaction", return_value={"authorization_url": "u"})
+    def test_starting_payment_does_not_grant_the_plan(self, _):
+        result = services.start_subscription_payment(self.vendor, self.premium)
         self.vendor.refresh_from_db()
-        self.assertEqual(self.vendor.plan, free_plan)
+        self.assertEqual(self.vendor.plan, self.basic)
+        self.assertEqual(self.vendor.pending_ref, result["reference"])
 
-    @patch("userprofile.services.requests.post")
-    def test_trial_upgrade_initialises_paystack_payment(self, mock_post):
-        from .services import change_plan_with_payment
+    def subscription_charge(self, reference, plan, amount=None, **extra):
+        return {
+            "status": "success",
+            "reference": reference,
+            "amount": (amount if amount is not None else plan.price) * 100,
+            "metadata": {"type": "subscription", "vendor_id": self.vendor.pk, "plan_id": plan.pk},
+            "customer": {"email": self.vendor.user.email, "customer_code": "CUS_1"},
+            "authorization": {"authorization_code": "AUTH_1", "reusable": True},
+            **extra,
+        }
 
-        self.vendor.subscription_status = "trial"
+    def test_payment_activates_after_trial_without_losing_trial_days(self):
+        trial_end = self.vendor.trial_end
+        self.vendor.pending_ref = "sub-1"
         self.vendor.save()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "status": True,
-            "data": {"authorization_url": "https://paystack.com/pay/test"},
-        }
-        mock_post.return_value = mock_response
+        services.apply_subscription_transaction(self.subscription_charge("sub-1", self.premium))
+        services.apply_subscription_transaction(self.subscription_charge("sub-1", self.premium))
 
-        mock_request = MagicMock()
-        mock_request.scheme = "https"
-        mock_request.get_host.return_value = "api.vendorxprt.com"
-
-        result = change_plan_with_payment(
-            self.vendor, self.pro_plan, request=mock_request
+        self.vendor.refresh_from_db()
+        self.assertEqual((self.vendor.plan, self.vendor.subscription_status), (self.premium, "active"))
+        self.assertEqual(self.vendor.subscription_expiry, trial_end + timedelta(days=30))
+        self.assertEqual(self.vendor.paystack_authorization_code, "AUTH_1")
+        self.assertEqual(
+            SubscriptionHistory.objects.filter(payment_reference="sub-1", event_type="payment_success").count(), 1
         )
 
-        self.assertTrue(result["success"])
-        self.assertEqual(result["payment_status"], "payment_required")
-        self.assertIn("authorization_url", result)
-        mock_post.assert_called_once()
+    def test_underpayment_is_rejected(self):
+        services.apply_subscription_transaction(self.subscription_charge("sub-2", self.premium, amount=10))
+        self.vendor.refresh_from_db()
+        self.assertEqual(self.vendor.subscription_status, "trial")
+
+    def test_recurring_renewal_found_by_subscription_code(self):
+        expiry = timezone.now() + timedelta(days=1)
+        VendorProfile.objects.filter(pk=self.vendor.pk).update(
+            subscription_status="active", subscription_expiry=expiry, paystack_subscription_code="SUB_1"
+        )
+        services.apply_subscription_transaction(
+            {
+                "status": "success",
+                "reference": "renewal-1",
+                "amount": 300000,
+                "subscription": {"subscription_code": "SUB_1"},
+                "plan": {"plan_code": "PLN_basic"},
+            }
+        )
+        self.vendor.refresh_from_db()
+        self.assertEqual(self.vendor.subscription_expiry, expiry + timedelta(days=30))
+
+    @patch.object(paystack, "fetch_subscription", return_value={"email_token": "tok_1"})
+    @patch.object(paystack, "disable_subscription")
+    def test_cancel_uses_paystack_email_token_and_keeps_access(self, disable, _):
+        VendorProfile.objects.filter(pk=self.vendor.pk).update(
+            subscription_status="active",
+            subscription_expiry=timezone.now() + timedelta(days=10),
+            paystack_subscription_code="SUB_1",
+        )
+        self.vendor.refresh_from_db()
+        services.cancel_subscription(self.vendor)
+        disable.assert_called_once_with("SUB_1", "tok_1")
+        self.assertTrue(self.vendor.has_selling_access())
+
+    @patch.object(paystack, "create_subscription", return_value={"subscription_code": "SUB_2", "email_token": "t2"})
+    @patch.object(paystack, "disable_subscription")
+    def test_downgrade_is_scheduled_for_next_billing_date(self, disable, create):
+        VendorProfile.objects.filter(pk=self.vendor.pk).update(
+            plan=self.premium,
+            subscription_status="active",
+            subscription_expiry=timezone.now() + timedelta(days=10),
+            paystack_subscription_code="SUB_1",
+            subscription_token="t1",
+            paystack_customer_code="CUS_1",
+            paystack_authorization_code="AUTH_1",
+        )
+        self.vendor.refresh_from_db()
+
+        result = services.change_plan(self.vendor, self.basic)
+
+        self.assertEqual(result["payment_status"], "scheduled")
+        self.vendor.refresh_from_db()
+        self.assertEqual((self.vendor.plan, self.vendor.scheduled_plan), (self.premium, self.basic))
+        create.assert_called_once()
+        disable.assert_called_once_with("SUB_1", "t1")
+
+    def test_subscription_webhook_applies_payment(self):
+        self.vendor.pending_ref = "sub-3"
+        self.vendor.save()
+        response = signed_webhook(
+            self.client,
+            {"event": "charge.success", "data": self.subscription_charge("sub-3", self.basic)},
+            path="/api/paystack_subscription_webhook/",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.vendor.refresh_from_db()
+        self.assertEqual(self.vendor.subscription_status, "active")
+
+    def test_unknown_webhook_events_are_acknowledged(self):
+        response = signed_webhook(self.client, {"event": "transfer.success", "data": {}})
+        self.assertEqual(response.status_code, 200)
+
+
+class SubscriptionApiTests(APITestCase):
+    def setUp(self):
+        self.vendor = make_vendor(plan=make_plan())
+        self.client.force_authenticate(self.vendor.user)
+
+    @patch.object(paystack, "verify_transaction")
+    def test_verify_rejects_references_the_vendor_does_not_own(self, verify):
+        response = self.client.post(
+            "/api/verify-subscription-payment/", {"reference": "someone-elses"}, format="json"
+        )
+        self.assertEqual(response.status_code, 404)
+        verify.assert_not_called()
+
+    def test_buyers_cannot_use_vendor_billing(self):
+        self.client.force_authenticate(make_user())
+        response = self.client.get("/api/my-subscription/")
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(response.data["error"])

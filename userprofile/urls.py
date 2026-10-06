@@ -1,147 +1,74 @@
 from django.urls import path
-from . import views, api_views
-from django.contrib.auth import views as auth_views
+
+from . import auth_api, subscription_api, vendor_api, webhook_api
 
 urlpatterns = [
-    path("vendors/<int:pk>/", views.vendor_detail, name="vendor_detail"),
-    path("order_detail/<int:pk>/", views.order_detail, name="order_details"),
-    path("my_orders", views.order_list, name="my_orders"),
-    path(
-        "toggle_fulfillment/<int:pk>/",
-        views.toggle_fulfillment,
-        name="toggle_fulfillment",
-    ),
-    path("signup", views.signup, name="signup"),
-    path("verify-signup", views.verify_signup, name="verify_signup"),
-    path("logout", auth_views.LogoutView.as_view(), name="logout"),
-    path(
-        "login",
-        auth_views.LoginView.as_view(template_name="userprofile/login.html"),
-        name="login",
-    ),
-    path("my_store", views.my_store, name="my_store"),
-    path("delete/<int:pk>/", views.delete_product, name="delete"),
-    path("edit_product/<int:pk>", views.edit_product, name="edit_product"),
-    path("add_product", views.add_product, name="add_product"),
-]
-urlpatterns += [
-    path("api/signup/", api_views.signup_api, name="signup_api"),
-    path("api/verify-signup/", api_views.verify_signup_api, name="verify_signup_api"),
-    path(
-        "api/resend-verification/",
-        api_views.resend_verification_api,
-        name="resend_verification_api",
-    ),
-    path(
-        "api/forgot-password/",
-        api_views.forgot_password_api,
-        name="forgot_password_api",
-    ),
-    path(
-        "api/verify-reset-code/",
-        api_views.verify_reset_code_api,
-        name="verify_reset_code_api",
-    ),
-    path(
-        "api/reset-password/", api_views.reset_password_api, name="reset_password_api"
-    ),
-    path(
-        "api/token/refresh",
-        api_views.refresh_token_api,
-        name="custom_token_refresh_api",
-    ),
-    path(
-        "api/token/refresh/",
-        api_views.refresh_token_api,
-        name="custom_token_refresh_api_slash",
-    ),
-    path("api/logout", api_views.logout_api, name="logout_api"),
-    path("api/logout/", api_views.logout_api, name="logout_api_slash"),
-    path("api/login", api_views.login_api, name="login_api"),
-    path("api/profile/", api_views.profile_api, name="profile_api"),
-    path(
-        "api/profile/picture/",
-        api_views.upload_profile_picture_api,
-        name="upload_profile_picture_api",
-    ),
+    # Accounts
+    path("api/signup/", auth_api.signup_api, name="signup_api"),
+    path("api/verify-signup/", auth_api.verify_signup_api, name="verify_signup_api"),
+    path("api/resend-verification/", auth_api.resend_verification_api, name="resend_verification_api"),
+    path("api/forgot-password/", auth_api.forgot_password_api, name="forgot_password_api"),
+    path("api/verify-reset-code/", auth_api.verify_reset_code_api, name="verify_reset_code_api"),
+    path("api/reset-password/", auth_api.reset_password_api, name="reset_password_api"),
+    path("api/login", auth_api.login_api, name="login_api"),
+    path("api/login/", auth_api.login_api, name="login_api_slash"),
+    path("api/token/refresh", auth_api.refresh_token_api, name="custom_token_refresh_api"),
+    path("api/token/refresh/", auth_api.refresh_token_api, name="custom_token_refresh_api_slash"),
+    path("api/logout", auth_api.logout_api, name="logout_api"),
+    path("api/logout/", auth_api.logout_api, name="logout_api_slash"),
+    path("api/profile/", auth_api.profile_api, name="profile_api"),
+    path("api/profile/picture/", auth_api.upload_profile_picture_api, name="upload_profile_picture_api"),
     path(
         "api/profile/picture/remove/",
-        api_views.remove_profile_picture_api,
+        auth_api.remove_profile_picture_api,
         name="remove_profile_picture_api",
     ),
-    path(
-        "api/register-vendor/",
-        api_views.register_vendor_api,
-        name="register_vendor_api",
-    ),
-    path("api/vendors/", api_views.vendors_list_api, name="vendors_list_api"),
-    path("api/vendor/<int:pk>/", api_views.vendor_detail_api, name="vendor_detail_api"),
+    # Vendor onboarding & public storefronts
+    path("api/register-vendor/", vendor_api.register_vendor_api, name="register_vendor_api"),
+    path("api/vendors/", vendor_api.vendors_list_api, name="vendors_list_api"),
+    path("api/vendor/<int:pk>/", vendor_api.vendor_detail_api, name="vendor_detail_api"),
     path(
         "api/vendor/<int:vendor_id>/reviews/",
-        api_views.vendor_reviews_public_api,
+        vendor_api.vendor_reviews_public_api,
         name="vendor_reviews_public_api",
     ),
-    path("api/my-store/", api_views.my_store_api, name="my_store_api"),
-    path("api/add-product/", api_views.add_product_api, name="add_product_api"),
-    path(
-        "api/edit-product/<int:pk>/",
-        api_views.edit_product_api,
-        name="edit_product_api",
-    ),
-    path(
-        "api/delete-product/<int:pk>/",
-        api_views.delete_product_api,
-        name="delete_product_api",
-    ),
-    path("api/my-order/", api_views.vendor_order_list_api, name="my_order_api"),
-    path("api/order/<int:pk>/", api_views.order_detail_api, name="order_detail_api"),
-    path("api/my-reviews/", api_views.vendor_reviews_api, name="vendor_reviews_api"),
+    path("api/vendor-plans/", vendor_api.vendor_plans_api, name="vendor_plans_api"),
+    # Vendor dashboard
+    path("api/my-store/", vendor_api.my_store_api, name="my_store_api"),
+    path("api/update-vendor/", vendor_api.update_vendor_api, name="update_vendor_api"),
+    path("api/my-products/", vendor_api.my_products_api, name="my_products_api"),
+    path("api/add-product/", vendor_api.add_product_api, name="add_product_api"),
+    path("api/edit-product/<int:pk>/", vendor_api.edit_product_api, name="edit_product_api"),
+    path("api/delete-product/<int:pk>/", vendor_api.delete_product_api, name="delete_product_api"),
+    path("api/my-order/", vendor_api.vendor_order_list_api, name="my_order_api"),
+    path("api/order/<int:pk>/", vendor_api.order_detail_api, name="order_detail_api"),
     path(
         "api/toggle-fulfillment/<int:pk>/",
-        api_views.toggle_fulfillment_api,
+        vendor_api.toggle_fulfillment_api,
         name="toggle_fulfillment_api",
     ),
-    path("api/vendor-plans/", api_views.vendor_plans_api, name="vendor_plans_api"),
-    path("api/vendor-kpis/", api_views.vendor_kpis_api, name="vendor_kpis_api"),
+    path("api/my-reviews/", vendor_api.vendor_reviews_api, name="vendor_reviews_api"),
+    path("api/vendor-kpis/", vendor_api.vendor_kpis_api, name="vendor_kpis_api"),
+    # Subscriptions
+    path("api/my-subscription/", vendor_api.my_subscription_status_api, name="my_subscription_status_api"),
+    path("api/resubscribe/", subscription_api.resubscribe_api, name="resubscribe_api"),
+    path("api/change_plan/", subscription_api.change_plan_api, name="change_plan_api"),
     path(
-        "api/my-subscription/",
-        api_views.my_subscription_status_api,
-        name="my_subscription_status_api",
+        "api/verify-subscription-payment/",
+        subscription_api.verify_subscription_payment_api,
+        name="verify_subscription_payment_api",
     ),
-    path("api/resubscribe/", api_views.resubscribe_api, name="resubscribe_api"),
-    path(
-        "api/cancel_subscription/",
-        api_views.cancel_subscription_api,
-        name="cancel_subscription_api",
-    ),
-    path(
-        "api/pause_subscription/",
-        api_views.pause_subscription_api,
-        name="pause_subscription_api",
-    ),
-    path(
-        "api/resume_subscription/",
-        api_views.resume_subscription_api,
-        name="resume_subscription_api",
-    ),
-    path(
-        "api/change_plan/",
-        api_views.change_plan_api,
-        name="change_plan_api",
-    ),
+    path("api/cancel_subscription/", subscription_api.cancel_subscription_api, name="cancel_subscription_api"),
     path(
         "api/subscription_history/",
-        api_views.subscription_history_api,
+        subscription_api.subscription_history_api,
         name="subscription_history_api",
     ),
+    # Paystack sends every event for the account to a single URL; all
+    # historical webhook paths route to the same handler.
     path(
         "api/paystack_subscription_webhook/",
-        api_views.paystack_webhook,
+        webhook_api.paystack_webhook,
         name="paystack_subscription_webhook",
-    ),
-    path(
-        "api/update-vendor/",
-        api_views.update_vendor_api,
-        name="update_vendor_api",
     ),
 ]
