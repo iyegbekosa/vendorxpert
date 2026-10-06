@@ -1,1889 +1,462 @@
-# store/api_views.py
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework.response import Response
-from rest_framework import status
-from .models import Product, Category, Payment, OrderItem, Review, Order
-from userprofile.email_utils import send_receipt_email, send_vendor_order_notification
+"""Buyer-facing marketplace API: catalogue, reviews, cart, checkout and orders."""
+
 import logging
-from .serializers import (
-    ProductSerializer,
-    ReviewSerializer,
-    ReviewDetailSerializer,
-    CartItemSerializer,
-    CheckoutSerializer,
-)
+
+from django.core.cache import cache
+from django.db.models import Avg, Count, Q
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
+
+from userprofile.bank_codes import VALID_BANK_CODES
+
+from . import paystack, services
+from .models import Category, Order, Payment, Product, Review
 from .pagination import StandardResultsPagination
-from userprofile.models import UserProfile
-from .cart import Cart
-import uuid, requests
-from django.conf import settings
-from django.db import transaction
-from collections import defaultdict
-from django.urls import reverse
-import hmac, hashlib, json
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
-from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
+from .serializers import (
+    CategorySerializer,
+    CheckoutSerializer,
+    ProductSerializer,
+    ReviewDetailSerializer,
+    ReviewSerializer,
+    with_rating_stats,
+)
 
 logger = logging.getLogger(__name__)
 
+PRODUCT_ORDERINGS = {
+    "newest": "-created_at",
+    "oldest": "created_at",
+    "price_low": "price",
+    "price_high": "-price",
+    "rating": "-avg_rating",
+    # Legacy values accepted for backwards compatibility.
+    "-created_at": "-created_at",
+    "created_at": "created_at",
+    "price": "price",
+    "-price": "-price",
+    "-id": "-created_at",
+}
+BANKS_CACHE_KEY = "paystack:banks:v1"
+BANKS_CACHE_SECONDS = 60 * 60 * 12
 
-@swagger_auto_schema(
-    method="get",
-    operation_description="Get all categories",
-    security=[],  # Public endpoint - no authentication required
-    responses={
-        200: openapi.Response(
-            description="List of all categories",
-            schema=openapi.Schema(
-                type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)
-            ),
-        )
-    },
-    tags=["Categories"],
-)
+
+class BankLookupThrottle(UserRateThrottle):
+    scope = "bank_lookup"
+
+
+def _error(message, http_status, code=None, **extra):
+    body = {"error": message, **extra}
+    if code:
+        body["code"] = code
+    return Response(body, status=http_status)
+
+
+def _product_queryset():
+    return with_rating_stats(
+        Product.objects.select_related("vendor", "category")
+    )
+
+
+def _paginated_products(request, queryset):
+    paginator = StandardResultsPagination()
+    page = paginator.paginate_queryset(queryset, request)
+    return paginator.get_paginated_response(ProductSerializer(page, many=True).data)
+
+
+# ── Catalogue ───────────────────────────────────────────────────────────────
+
+
 @api_view(["GET"])
+@permission_classes([AllowAny])
 def categories_list_api(request):
-    """
-    Get all categories.
-
-    Returns a list of all available categories in the system.
-    """
-    from store.serializers import CategorySerializer
-
-    categories = Category.objects.all()
-    serializer = CategorySerializer(categories, many=True)
-    return Response(serializer.data, status=status.HTTP_200_OK)
+    categories = Category.objects.order_by("title")
+    return Response(CategorySerializer(categories, many=True).data)
 
 
-@swagger_auto_schema(
-    method="get",
-    operation_description="Get all products with pagination",
-    security=[],  # Public endpoint - no authentication required
-    manual_parameters=[
-        openapi.Parameter(
-            "page",
-            openapi.IN_QUERY,
-            description="Page number",
-            type=openapi.TYPE_INTEGER,
-            required=False,
-        ),
-        openapi.Parameter(
-            "ordering",
-            openapi.IN_QUERY,
-            description="Order by field (e.g., 'title', '-created_at', 'price')",
-            type=openapi.TYPE_STRING,
-            required=False,
-        ),
-    ],
-    responses={
-        200: openapi.Response(
-            description="Paginated list of all products",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
-                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
-                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
-                    "results": openapi.Schema(
-                        type=openapi.TYPE_ARRAY,
-                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
-                    ),
-                },
-            ),
-        )
-    },
-    tags=["Products"],
-)
 @api_view(["GET"])
+@permission_classes([AllowAny])
 def products_list_api(request):
-    """
-    Get all products with pagination and optional ordering.
+    """Paginated in-stock listings.
 
-    Returns a paginated list of all active products from vendors
-    with active subscriptions. Supports ordering by various fields.
+    Query params: ``search``/``query`` (title, description or store name),
+    ``category`` (id or slug), ``vendor`` (id), ``ordering`` and ``page``.
     """
-    products = Product.objects.filter(
-        status=Product.ACTIVE,
-        stock=Product.IN_STOCK,
-        vendor__subscription_status__in=["active", "grace", "trial"],
+    products = _product_queryset().filter(
+        pk__in=Product.objects.purchasable().values("pk")
     )
 
-    # Handle ordering
-    ordering = request.GET.get("ordering", "-id")  # Default to newest first
-    valid_orderings = [
-        "title",
-        "-title",
-        "price",
-        "-price",
-        "created_at",
-        "-created_at",
-        "id",
-        "-id",
-    ]
-    if ordering in valid_orderings:
-        products = products.order_by(ordering)
-
-    paginator = StandardResultsPagination()
-    result_page = paginator.paginate_queryset(products, request)
-
-    serializer = ProductSerializer(result_page, many=True)
-
-    return paginator.get_paginated_response(serializer.data)
-
-
-@swagger_auto_schema(
-    method="get",
-    operation_description="Get detailed information about a specific product",
-    manual_parameters=[
-        openapi.Parameter(
-            "category_slug",
-            openapi.IN_PATH,
-            description="Category slug",
-            type=openapi.TYPE_STRING,
-        ),
-        openapi.Parameter(
-            "slug",
-            openapi.IN_PATH,
-            description="Product slug",
-            type=openapi.TYPE_STRING,
-        ),
-    ],
-    responses={
-        200: ProductSerializer,
-        404: openapi.Response(description="Product not found"),
-    },
-    tags=["Products"],
-)
-@api_view(["GET"])
-def product_detail_api(request, category_slug, slug):
-    """
-    Retrieve detailed information about a specific product.
-
-    Returns product details including title, description, price, images, etc.
-    """
-    product = get_object_or_404(Product, slug=slug, category__slug=category_slug)
-    serializer = ProductSerializer(product)
-    return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-@swagger_auto_schema(
-    method="get",
-    operation_description="Get all products in a specific category",
-    manual_parameters=[
-        openapi.Parameter(
-            "slug",
-            openapi.IN_PATH,
-            description="Category slug",
-            type=openapi.TYPE_STRING,
-        ),
-        openapi.Parameter(
-            "page",
-            openapi.IN_QUERY,
-            description="Page number",
-            type=openapi.TYPE_INTEGER,
-            required=False,
-        ),
-    ],
-    responses={
-        200: openapi.Response(
-            description="Paginated list of products in the category",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
-                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
-                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
-                    "results": openapi.Schema(
-                        type=openapi.TYPE_ARRAY,
-                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
-                    ),
-                },
-            ),
-        ),
-        404: openapi.Response(description="Category not found"),
-    },
-    tags=["Products"],
-)
-@api_view(["GET"])
-def category_detail_api(request, slug):
-    """
-    Get all products in a specific category.
-
-    Returns a paginated list of all active products in the specified category.
-    Only products from vendors with active subscriptions are included.
-    """
-    category = get_object_or_404(Category, slug=slug)
-    products = category.product.filter(
-        status=Product.ACTIVE,
-        stock=Product.IN_STOCK,
-        vendor__subscription_status__in=["active", "grace", "trial"],
-    )
-
-    paginator = StandardResultsPagination()
-    result_page = paginator.paginate_queryset(products, request)
-
-    serializer = ProductSerializer(result_page, many=True)
-
-    return paginator.get_paginated_response(serializer.data)
-
-
-@swagger_auto_schema(
-    method="get",
-    operation_description="Search for products by title or description",
-    manual_parameters=[
-        openapi.Parameter(
-            "query",
-            openapi.IN_QUERY,
-            description="Search query string",
-            type=openapi.TYPE_STRING,
-            required=False,
-        ),
-        openapi.Parameter(
-            "page",
-            openapi.IN_QUERY,
-            description="Page number",
-            type=openapi.TYPE_INTEGER,
-            required=False,
-        ),
-    ],
-    responses={
-        200: openapi.Response(
-            description="Paginated list of products matching the search query",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
-                    "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
-                    "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
-                    "results": openapi.Schema(
-                        type=openapi.TYPE_ARRAY,
-                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
-                    ),
-                },
-            ),
+    term = (request.GET.get("search") or request.GET.get("query") or "").strip()
+    if term:
+        products = products.filter(
+            Q(title__icontains=term)
+            | Q(description__icontains=term)
+            | Q(vendor__store_name__icontains=term)
         )
-    },
-    tags=["Products"],
-)
+
+    category = (request.GET.get("category") or "").strip()
+    if category:
+        lookup = {"category_id": category} if category.isdigit() else {"category__slug": category}
+        products = products.filter(**lookup)
+
+    vendor_id = (request.GET.get("vendor") or "").strip()
+    if vendor_id.isdigit():
+        products = products.filter(vendor_id=vendor_id)
+
+    ordering = PRODUCT_ORDERINGS.get(request.GET.get("ordering", ""), "-created_at")
+    products = products.order_by("-featured", ordering, "-pk")
+    return _paginated_products(request, products)
+
+
+# ``/api/search/?query=`` is kept for older clients; it is the same listing.
+search_api = products_list_api
+
+
 @api_view(["GET"])
-def search_api(request):
-    """
-    Search for products by title or description.
+@permission_classes([AllowAny])
+def category_detail_api(request, slug):
+    category = get_object_or_404(Category, slug=slug)
+    products = _product_queryset().filter(
+        pk__in=Product.objects.purchasable().filter(category=category).values("pk")
+    ).order_by("-featured", "-created_at")
+    return _paginated_products(request, products)
 
-    Returns a paginated list of products that match the search query.
-    Only active products from vendors with active subscriptions are returned.
-    """
-    query = request.GET.get("query", "")
 
-    products = Product.objects.filter(
-        status=Product.ACTIVE,
-        stock=Product.IN_STOCK,
-        vendor__subscription_status__in=["active", "grace", "trial"],
-    ).filter(Q(title__icontains=query) | Q(description__icontains=query))
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def product_detail_api(request, category_slug, slug):
+    """A single product. Sold-out products stay viewable so links keep working;
+    hidden products are only visible to the vendor who owns them."""
+    product = get_object_or_404(
+        _product_queryset(), slug=slug, category__slug=category_slug
+    )
+    vendor = getattr(request.user, "vendor_profile", None) if request.user.is_authenticated else None
+    is_owner = vendor is not None and product.vendor_id == vendor.id
+    is_visible = Product.objects.visible().filter(pk=product.pk).exists()
+    if not is_visible and not is_owner:
+        return _error("This product is no longer available.", status.HTTP_404_NOT_FOUND, "unavailable")
+    return Response(ProductSerializer(product).data)
+
+
+# ── Reviews ─────────────────────────────────────────────────────────────────
+
+
+def _rating_stats(reviews):
+    stats = reviews.aggregate(average=Avg("rating"), total=Count("id"))
+    counts = {
+        int(row["rating"]): row["count"]
+        for row in reviews.values("rating").annotate(count=Count("id"))
+    }
+    return {
+        "average_rating": round(stats["average"] or 0, 1),
+        "total_reviews": stats["total"],
+        "rating_breakdown": {f"{n}_star": counts.get(n, 0) for n in range(5, 0, -1)},
+    }
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def get_product_reviews_api(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    reviews = Review.objects.filter(product=product, approved_review=True)
 
     paginator = StandardResultsPagination()
-    result_page = paginator.paginate_queryset(products, request)
+    page = paginator.paginate_queryset(
+        reviews.select_related("author").order_by("-created_date"), request
+    )
+    response = paginator.get_paginated_response(ReviewDetailSerializer(page, many=True).data)
+    response.data["rating_stats"] = _rating_stats(reviews)
+    return response
 
-    serializer = ProductSerializer(result_page, many=True)
 
-    return paginator.get_paginated_response(serializer.data)
-
-
-@swagger_auto_schema(
-    method="post",
-    operation_description="Add a review for a product",
-    request_body=ReviewSerializer,
-    security=[{"Bearer": []}],  # Add this line to enable JWT auth in Swagger
-    manual_parameters=[
-        openapi.Parameter(
-            "pk",
-            openapi.IN_PATH,
-            description="Product ID",
-            type=openapi.TYPE_INTEGER,
-        ),
-    ],
-    responses={
-        201: openapi.Response(
-            description="Review successfully created",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                },
-            ),
-        ),
-        400: openapi.Response(description="Validation errors"),
-        401: openapi.Response(description="Authentication required"),
-        404: openapi.Response(description="Product not found"),
-    },
-    tags=["Reviews"],
-)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def add_review_api(request, pk):
-    """
-    Add a review for a specific product.
-
-    Requires authentication. Creates a new review for the specified product.
-    """
     product = get_object_or_404(Product, pk=pk)
 
-    vendor_profile = getattr(request.user, "vendor_profile", None)
-    if vendor_profile and product.vendor == vendor_profile:
-        return Response(
-            {"error": "You cannot review your own product."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    vendor = getattr(request.user, "vendor_profile", None)
+    if vendor and product.vendor_id == vendor.id:
+        return _error("You can't review your own product.", status.HTTP_403_FORBIDDEN)
 
     has_purchased = Order.objects.filter(
-        created_by=request.user,
-        is_paid=True,
-        items__product=product,
+        created_by=request.user, is_paid=True, items__product=product
     ).exists()
     if not has_purchased:
-        return Response(
-            {"error": "You can only review products you have purchased."},
-            status=status.HTTP_400_BAD_REQUEST,
+        return _error(
+            "You can review this product after you've bought it.", status.HTTP_403_FORBIDDEN
+        )
+
+    if Review.objects.filter(product=product, author=request.user).exists():
+        return _error(
+            "You've already reviewed this product. You can edit your review instead.",
+            status.HTTP_409_CONFLICT,
+            "already_reviewed",
         )
 
     serializer = ReviewSerializer(data=request.data)
-
-    if serializer.is_valid():
-        user_profile = get_object_or_404(UserProfile, email=request.user.email)
-        serializer.save(product=product, author=user_profile)
-        return Response({"success": True}, status=status.HTTP_201_CREATED)
-
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    serializer.is_valid(raise_exception=True)
+    review = serializer.save(product=product, author=request.user)
+    return Response(ReviewDetailSerializer(review).data, status=status.HTTP_201_CREATED)
 
 
-@swagger_auto_schema(
-    method="delete",
-    operation_description="Delete a review",
-    manual_parameters=[
-        openapi.Parameter(
-            "review_id",
-            openapi.IN_PATH,
-            description="Review ID",
-            type=openapi.TYPE_INTEGER,
-        ),
-    ],
-    responses={
-        204: openapi.Response(description="Review successfully deleted"),
-        401: openapi.Response(description="Authentication required"),
-        403: openapi.Response(description="Not authorized to delete this review"),
-        404: openapi.Response(description="Review not found"),
-    },
-    tags=["Reviews"],
-)
+@api_view(["PUT", "PATCH"])
+@permission_classes([IsAuthenticated])
+def edit_review_api(request, review_id):
+    review = get_object_or_404(Review, pk=review_id, author=request.user)
+    serializer = ReviewSerializer(review, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    review = serializer.save()
+    return Response(ReviewDetailSerializer(review).data)
+
+
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
 def delete_review_api(request, review_id):
-    """
-    Delete a specific review.
-
-    Only the author of the review can delete it.
-    """
-    review = get_object_or_404(Review, id=review_id)
-
-    if review.author != request.user:
-        return Response(
-            {"error": "You are not authorized to delete this review."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
+    review = get_object_or_404(Review, pk=review_id, author=request.user)
     review.delete()
-    return Response(
-        {"success": "Review deleted successfully."}, status=status.HTTP_204_NO_CONTENT
-    )
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@swagger_auto_schema(
-    method="put",
-    operation_description="Edit/update an existing review",
-    request_body=ReviewSerializer,
-    manual_parameters=[
-        openapi.Parameter(
-            "review_id",
-            openapi.IN_PATH,
-            description="Review ID to edit",
-            type=openapi.TYPE_INTEGER,
-        ),
-    ],
-    responses={
-        200: openapi.Response(
-            description="Review successfully updated",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                    "message": openapi.Schema(type=openapi.TYPE_STRING),
-                },
-            ),
-        ),
-        400: openapi.Response(description="Invalid data"),
-        401: openapi.Response(description="Authentication required"),
-        403: openapi.Response(description="Not authorized to edit this review"),
-        404: openapi.Response(description="Review not found"),
-    },
-    tags=["Reviews"],
-)
-@api_view(["PUT"])
-@permission_classes([IsAuthenticated])
-def edit_review_api(request, review_id):
-    """
-    Edit/update an existing review.
+# ── Cart ────────────────────────────────────────────────────────────────────
 
-    Only the author of the review can edit it. Allows updating rating, text, and subject.
-    """
-    review = get_object_or_404(Review, id=review_id)
 
-    if review.author != request.user:
-        return Response(
-            {"error": "You are not authorized to edit this review."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    serializer = ReviewSerializer(review, data=request.data, partial=True)
-
-    if serializer.is_valid():
-        serializer.save()
-        return Response(
-            {"success": True, "message": "Review updated successfully."},
-            status=status.HTTP_200_OK,
-        )
-
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-@swagger_auto_schema(
-    method="get",
-    operation_description="Get all reviews for a specific product",
-    manual_parameters=[
-        openapi.Parameter(
-            "pk",
-            openapi.IN_PATH,
-            description="Product ID",
-            type=openapi.TYPE_INTEGER,
-        ),
-        openapi.Parameter(
-            "page",
-            openapi.IN_QUERY,
-            description="Page number for pagination",
-            type=openapi.TYPE_INTEGER,
-            required=False,
-        ),
-    ],
-    responses={
-        200: openapi.Response(
-            description="Paginated list of product reviews",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "count": openapi.Schema(type=openapi.TYPE_INTEGER),
-                    "next": openapi.Schema(type=openapi.TYPE_STRING, format="uri"),
-                    "previous": openapi.Schema(type=openapi.TYPE_STRING, format="uri"),
-                    "results": openapi.Schema(
-                        type=openapi.TYPE_ARRAY,
-                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
-                    ),
-                },
-            ),
-        ),
-        404: openapi.Response(description="Product not found"),
-    },
-    tags=["Reviews"],
-)
-@api_view(["GET"])
-def get_product_reviews_api(request, pk):
-    """
-    Get all reviews for a specific product.
-
-    Returns a paginated list of all approved reviews for the specified product.
-    """
-    try:
-        product = Product.objects.get(pk=pk)
-    except Product.DoesNotExist:
-        return Response({"error": f"Product with ID {pk} not found"}, status=404)
-
-    reviews = Review.objects.filter(product=product, approved_review=True).order_by(
-        "-created_date"
-    )
-
-    paginator = StandardResultsPagination()
-    result_page = paginator.paginate_queryset(reviews, request)
-
-    serializer = ReviewDetailSerializer(result_page, many=True)
-
-    return paginator.get_paginated_response(serializer.data)
-
-
-@swagger_auto_schema(
-    method="get",
-    operation_description="Get current cart contents",
-    responses={
-        200: openapi.Response(
-            description="Cart contents with items, total cost, and item count",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "cart_items": openapi.Schema(
-                        type=openapi.TYPE_ARRAY,
-                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
-                    ),
-                    "cart_total": openapi.Schema(type=openapi.TYPE_NUMBER),
-                    "cart_count": openapi.Schema(type=openapi.TYPE_INTEGER),
-                },
-            ),
-        )
-    },
-    tags=["Cart"],
-)
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def cart_view_api(request):
-    """
-    Get the current cart contents.
-
-    Returns all items in the cart with their details, total cost, and item count.
-    """
-    cart = Cart(request)
-
-    items = []
-    for item in cart:
-        items.append(
-            {
-                "product": {
-                    "id": item["product"].id,
-                    "title": item["product"].title,
-                    "thumbnail": item["product"].get_thumbnail(),
-                    "price": item["product"].display_price(),
-                },
-                "quantity": item["quantity"],
-                "total_price": item["total_price"],
-            }
-        )
-
-    serializer = CartItemSerializer(cart, many=True)
-    return Response(
-        {
-            "cart_items": serializer.data,
-            "cart_total": cart.get_total_cost(),
-            "cart_count": len(cart),
-        }
-    )
-
-
-@swagger_auto_schema(
-    method="post",
-    operation_description="Add a product to the cart",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        required=["product_id"],
-        properties={
-            "product_id": openapi.Schema(
-                type=openapi.TYPE_INTEGER, description="Product ID to add to cart"
-            ),
-            "quantity": openapi.Schema(
-                type=openapi.TYPE_INTEGER,
-                description="Quantity to add (default: 1)",
-                default=1,
-            ),
-        },
-    ),
-    responses={
-        200: openapi.Response(
-            description="Product successfully added to cart",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                    "cart_total_items": openapi.Schema(type=openapi.TYPE_INTEGER),
-                    "cart_count": openapi.Schema(type=openapi.TYPE_INTEGER),
-                },
-            ),
-        ),
-        400: openapi.Response(description="Missing product_id or invalid data"),
-        500: openapi.Response(description="Internal server error"),
-    },
-    tags=["Cart"],
-)
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def api_add_to_cart(request):
-    """
-    Add a product to the shopping cart.
-
-    Adds the specified product with the given quantity to the cart.
-    If the product already exists in the cart, updates the quantity.
-    """
-    product_id = request.data.get("product_id")
-    quantity = request.data.get("quantity", 1)
-
-    if not product_id:
-        return Response(
-            {"success": False, "error": "Missing product_id"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    try:
-        product = Product.objects.get(pk=product_id)
-    except Product.DoesNotExist:
-        return Response(
-            {"success": False, "error": "Product not found"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    vendor_profile = getattr(request.user, "vendor_profile", None)
-    if vendor_profile and product.vendor == vendor_profile:
-        return Response(
-            {"error": "You cannot add your own product to your cart."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    try:
-        cart = Cart(request)
-        cart.add(product_id, quantity=int(quantity), update_quantity=True)
-
-        return Response(
-            {
-                "success": True,
-                "cart_total_items": len(cart),
-                "cart_count": len(cart),
-            },
-            status=status.HTTP_200_OK,
-        )
-
-    except Exception as e:
-        return Response(
-            {"success": False, "error": str(e)},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-
-@swagger_auto_schema(
-    method="post",
-    operation_description="Remove a product from the cart",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        required=["product_id"],
-        properties={
-            "product_id": openapi.Schema(
-                type=openapi.TYPE_INTEGER, description="Product ID to remove from cart"
-            ),
-        },
-    ),
-    responses={
-        200: openapi.Response(
-            description="Product successfully removed from cart",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                    "message": openapi.Schema(type=openapi.TYPE_STRING),
-                    "cart_count": openapi.Schema(type=openapi.TYPE_INTEGER),
-                },
-            ),
-        ),
-        400: openapi.Response(description="Missing product_id"),
-    },
-    tags=["Cart"],
-)
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def api_remove_from_cart(request):
-    """
-    Remove a product completely from the cart.
-
-    Removes all quantities of the specified product from the cart.
-    """
-    product_id = request.data.get("product_id")
-
-    if not product_id:
-        return Response(
-            {"success": False, "error": "Missing product_id"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    cart = Cart(request)
-    cart.remove(product_id)
-
-    return Response(
-        {"success": True, "message": "Item removed", "cart_count": len(cart)},
-        status=status.HTTP_200_OK,
-    )
-
-
-@swagger_auto_schema(
-    method="post",
-    operation_description="Increase or decrease product quantity in cart",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        required=["product_id", "action"],
-        properties={
-            "product_id": openapi.Schema(
-                type=openapi.TYPE_INTEGER, description="Product ID"
-            ),
-            "action": openapi.Schema(
-                type=openapi.TYPE_STRING,
-                description="Action to perform",
-                enum=["increase", "decrease"],
-            ),
-        },
-    ),
-    responses={
-        200: openapi.Response(
-            description="Quantity successfully updated",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                    "message": openapi.Schema(type=openapi.TYPE_STRING),
-                    "cart_count": openapi.Schema(type=openapi.TYPE_INTEGER),
-                },
-            ),
-        ),
-        400: openapi.Response(description="Invalid data provided"),
-    },
-    tags=["Cart"],
-)
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def api_change_quantity(request):
-    """
-    Increase or decrease the quantity of a product in the cart.
-
-    Use 'increase' to add 1 to the quantity or 'decrease' to subtract 1.
-    """
-    product_id = request.data.get("product_id")
-    action = request.data.get("action")
-
-    if not product_id or action not in ["increase", "decrease"]:
-        return Response(
-            {"success": False, "error": "Invalid data"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    cart = Cart(request)
-    quantity = 1 if action == "increase" else -1
-    cart.add(product_id, quantity, update_quantity=True)
-
-    return Response(
-        {
-            "success": True,
-            "message": f"{action.title()}d item",
-            "cart_count": len(cart),
-        },
-        status=status.HTTP_200_OK,
-    )
-
-
-@swagger_auto_schema(
-    method="post",
-    operation_description="Process checkout and initiate payment",
-    request_body=CheckoutSerializer,
-    security=[{"Bearer": []}],  # Add JWT auth requirement for Swagger
-    responses={
-        200: openapi.Response(
-            description="Payment initialized successfully",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "authorization_url": openapi.Schema(
-                        type=openapi.TYPE_STRING, description="Paystack payment URL"
-                    ),
-                    "access_code": openapi.Schema(
-                        type=openapi.TYPE_STRING, description="Paystack access code"
-                    ),
-                    "reference": openapi.Schema(
-                        type=openapi.TYPE_STRING, description="Payment reference"
-                    ),
-                },
-            ),
-        ),
-        400: openapi.Response(description="Validation errors or cart is empty"),
-        401: openapi.Response(description="Authentication required"),
-        502: openapi.Response(description="Payment gateway error"),
-    },
-    tags=["Checkout"],
-)
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def checkout_api(request):
-    """
-    Process checkout and initiate payment with Paystack.
-
-    Creates an order from the current cart and initiates payment processing.
-    Requires authentication and a non-empty cart.
-    """
-    cart = Cart(request)
-    user = request.user
-
-    if len(cart) == 0:
-        return Response(
-            {"detail": "Cart is empty. Cannot proceed to checkout."}, status=400
-        )
-
-    serializer = CheckoutSerializer(data=request.data)
-    if serializer.is_valid():
-        total_price = sum(
-            item["product"].price * int(item["quantity"]) for item in cart
-        )
-
-        ref = str(uuid.uuid4()).replace("-", "")[:20]
-        validated_data = serializer.validated_data
-
-        from store.models import Order
-
-        # Calculate payment amounts before creating DB records
-        total_price_kobo = int(round(float(total_price) * 100))
-        # Paystack fee: 1.5% of (amount + fee) + ₦100 flat, cap ₦2000
-        # Solve: fee = 0.015*(total+fee) + 10000 → fee = (0.015*total + 10000) / 0.985
-        raw_fee = int(round((0.015 * total_price_kobo + 10000) / 0.985))
-        estimated_fee_kobo = min(raw_fee, 200000)
-
-        # Total amount customer pays (includes platform fee)
-        amount_kobo = total_price_kobo + estimated_fee_kobo
-
-        # Calculate vendor shares - only from product prices, NOT platform fees
-        vendor_totals = defaultdict(int)
-        products_without_subaccount = []
-
-        buyer_vendor = getattr(request.user, "vendor_profile", None)
-        for item in cart:
-            product = item["product"]
-            quantity = int(item["quantity"])
-            price_kobo = int(round(float(product.price) * quantity * 100))
-
-            # Defensive backstop: no payout for buyer's own products
-            if buyer_vendor and product.vendor == buyer_vendor:
-                logger.info(
-                    f"Payment {ref}: skipping payout for self-purchased product {product.id}"
-                )
-                continue
-
-            subaccount_code = product.vendor.subaccount_code
-            if subaccount_code:
-                vendor_totals[subaccount_code] += price_kobo
-            else:
-                products_without_subaccount.append(product.vendor.store_name)
-
-        vendor_totals = {k: v for k, v in vendor_totals.items() if v > 0}
-
-        # Validate admin subaccount config
-        admin_subaccount = getattr(settings, "ADMIN_SUBACCOUNT_CODE", None)
-        if admin_subaccount:
-            admin_subaccount = str(admin_subaccount).strip() or None
-        if admin_subaccount and not admin_subaccount.startswith("ACCT_"):
-            logger.error(f"Invalid admin subaccount format: {admin_subaccount}")
-            return Response({"detail": "Invalid admin subaccount format. Must start with 'ACCT_'"}, status=500)
-        if not admin_subaccount:
-            logger.warning("ADMIN_SUBACCOUNT_CODE not configured. Platform fee will stay in main wallet.")
-
-        # Validate vendor subaccount codes
-        for subaccount_code in vendor_totals:
-            if not isinstance(subaccount_code, str) or not subaccount_code.startswith("ACCT_"):
-                return Response({"detail": f"Invalid subaccount code format: {subaccount_code}"}, status=400)
-
-        # Build split
-        admin_amount = estimated_fee_kobo + (total_price_kobo - sum(vendor_totals.values()))
-        split_subaccounts = list(vendor_totals.items())
-        if admin_subaccount:
-            split_subaccounts.append((admin_subaccount, admin_amount))
-
-        split = None
-        if split_subaccounts:
-            split_total = sum(share for _, share in split_subaccounts)
-            if split_total != amount_kobo:
-                logger.error(f"Payment {ref}: Split total {split_total} != amount {amount_kobo}")
-                return Response({"detail": f"Split mismatch: {split_total} vs {amount_kobo}"}, status=400)
-
-            split = {
-                "type": "flat",
-                "bearer_type": "account",
-                "subaccounts": [{"subaccount": sub, "share": share} for sub, share in split_subaccounts],
-            }
-            if admin_subaccount:
-                split["bearer_type"] = "subaccount"
-                split["bearer_subaccount"] = admin_subaccount
-
-        logger.info(
-            f"Payment {ref}: amount=₦{amount_kobo/100:,.2f} vendors={dict(vendor_totals)} "
-            f"admin={admin_amount/100:,.2f} split={'yes' if split else 'no'}"
-        )
-        if products_without_subaccount:
-            logger.info(f"Payment {ref}: products without vendor subaccount: {products_without_subaccount}")
-
-        callback_url = f"https://vendorxprt.com/success?reference={ref}&amount={total_price}&status=success"
-        payload = {
-            "email": user.email,
-            "amount": amount_kobo,
-            "reference": ref,
-            "callback_url": callback_url,
-        }
-        if split:
-            payload["split"] = split
-
-        headers = {
-            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
-            "Content-Type": "application/json",
-        }
-
-        logger.info(f"Payment {ref}: Sending payload to Paystack: {payload}")
-
-        response = requests.post(
-            f"{settings.PAYSTACK_BASE_URL}/transaction/initialize",
-            json=payload,
-            headers=headers,
-        )
-
-        logger.info(f"Payment {ref}: Paystack HTTP {response.status_code} — raw response: {response.text}")
-
-        try:
-            res_data = response.json()
-        except ValueError:
-            logger.error(f"Payment {ref}: Paystack returned invalid JSON: {response.text}")
-            return Response({"detail": "Paystack returned an invalid response."}, status=502)
-
-        if not (response.status_code == 200 and res_data.get("status")):
-            error_msg = res_data.get("message", "Unknown Paystack error")
-            logger.error(f"Payment {ref}: Paystack init failed. Status: {response.status_code}, Response: {res_data}")
-            return Response({"detail": error_msg, "paystack_status": response.status_code}, status=400)
-
-        # Only persist order + payment after Paystack confirms
-        with transaction.atomic():
-            order = Order.objects.create(
-                created_by=user,
-                total_cost=total_price,
-                ref=ref,
-                first_name=validated_data.get("first_name"),
-                last_name=validated_data.get("last_name"),
-                phone=validated_data.get("phone"),
-                pickup_location=validated_data.get("pickup_location"),
-            )
-            for item in cart:
-                OrderItem.objects.create(
-                    order=order,
-                    product=item["product"],
-                    quantity=item["quantity"],
-                    price=item["product"].price * int(item["quantity"]),
-                )
-            payment = Payment.objects.create(
-                user=user, order=order, amount=total_price, ref=ref,
-                status="pending", paystack_response=res_data,
-            )
-
-        logger.info(f"Payment {ref}: Paystack init success. Access code: {res_data['data'].get('access_code')}")
-        return Response(
-            {
-                "authorization_url": res_data["data"]["authorization_url"],
-                "access_code": res_data["data"]["access_code"],
-                "reference": res_data["data"]["reference"],
-            },
-            status=200,
-        )
-
-    return Response(serializer.errors, status=400)
-
-
-@swagger_auto_schema(
-    method="get",
-    operation_description="Handle Paystack payment callback",
-    manual_parameters=[
-        openapi.Parameter(
-            "reference",
-            openapi.IN_QUERY,
-            description="Payment reference from Paystack",
-            type=openapi.TYPE_STRING,
-            required=True,
-        ),
-    ],
-    responses={
-        200: openapi.Response(
-            description="Payment verified successfully",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "detail": openapi.Schema(type=openapi.TYPE_STRING),
-                    "status": openapi.Schema(type=openapi.TYPE_STRING),
-                },
-            ),
-        ),
-        400: openapi.Response(description="Payment verification failed"),
-        503: openapi.Response(description="Verification service error"),
-    },
-    tags=["Payment"],
-)
-@api_view(["GET"])
-@permission_classes([AllowAny])
-def paystack_callback_api(request):
-    """
-    Handle payment callback from Paystack.
-
-    Verifies the payment status and updates the order accordingly.
-    Called by Paystack after payment completion.
-    """
-    ref = request.GET.get("reference")
-    if not ref:
-        return Response({"detail": "No transaction reference provided"}, status=400)
-
-    url = f"{settings.PAYSTACK_BASE_URL}/transaction/verify/{ref}"
-    headers = {"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"}
-
-    try:
-        response = requests.get(url, headers=headers)
-        data = response.json()
-    except Exception as e:
-        return Response({"detail": f"Verification error: {str(e)}"}, status=503)
-
-    if response.status_code != 200 or not data.get("status"):
-        return Response({"detail": "Failed to verify payment"}, status=400)
-
-    payment_data = data["data"]
-    payment = get_object_or_404(Payment, ref=ref)
-
-    if payment.status == "paid":
-        return Response({"detail": "Already paid", "status": "success"}, status=200)
-
-    if payment_data["status"] == "success":
-        payment.status = "paid"
-        payment.save()
-
-        order = payment.order
-        order.is_paid = True
-        if hasattr(order, "status"):
-            order.status = "completed"
-        order.save()
-
-        # Send receipt email to customer
-        try:
-            send_receipt_email(order)
-            logger.info(f"Receipt email sent successfully for order {order.id}")
-        except Exception as e:
-            logger.error(f"Failed to send receipt email for order {order.id}: {e}")
-
-        # Send order notification email to vendor
-        try:
-            send_vendor_order_notification(order)
-            logger.info(f"Vendor notification sent successfully for order {order.id}")
-        except Exception as e:
-            logger.error(
-                f"Failed to send vendor notification for order {order.id}: {e}"
-            )
-
-        cart = Cart(request)
-        cart.clear()
-
-        return Response(
-            {"detail": "Payment verified and order marked as paid"}, status=200
-        )
-
-    payment.status = "failed"
-    payment.save()
-    return Response({"detail": "Payment failed or was not successful"}, status=400)
-
-
-@swagger_auto_schema(
-    method="post",
-    operation_description="Handle Paystack webhook notifications",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        description="Webhook payload from Paystack",
-    ),
-    responses={
-        200: openapi.Response(description="Webhook processed successfully"),
-        400: openapi.Response(description="Invalid webhook data"),
-        401: openapi.Response(description="Invalid webhook signature"),
-    },
-    tags=["Payment"],
-)
-@method_decorator(csrf_exempt, name="dispatch")
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def paystack_webhook_api(request):
-    """
-    Handle webhook notifications from Paystack.
-
-    Processes payment status updates sent by Paystack.
-    Validates the webhook signature for security.
-    """
-    signature = request.headers.get("x-paystack-signature")
-    if not signature:
-        logger.warning("Paystack webhook called without signature")
-        return Response(status=400)
-
-    secret_key = settings.PAYSTACK_SECRET_KEY.encode("utf-8")
-    payload = request.body
-    computed_hash = hmac.new(secret_key, payload, hashlib.sha512).hexdigest()
-
-    if not hmac.compare_digest(computed_hash, signature):
-        logger.warning("Invalid Paystack signature")
-        return Response(status=403)
-
-    try:
-        data = json.loads(payload.decode("utf-8"))
-    except ValueError as e:
-        logger.error(f"Invalid JSON in Paystack webhook: {e}")
-        return Response(status=400)
-
-    event = data.get("event")
-    if event == "charge.success":
-        reference = data.get("data", {}).get("reference")
-        if reference:
-            try:
-                payment = Payment.objects.get(ref=reference)
-            except Payment.DoesNotExist:
-                logger.error(f"No Payment found for ref {reference}")
-            else:
-                if payment.status != "paid":
-                    payment.status = "paid"
-                    payment.save()
-                    order = payment.order
-                    if order:
-                        order.is_paid = True
-                        order.status = "completed"
-
-                        # Reduce stock for all ordered items
-                        for item in order.items.all():
-                            item.product.reduce_stock(item.quantity)
-
-                        order.save()
-
-                        # Send receipt email for the completed order
-                        try:
-                            send_receipt_email(order)
-                            logger.info(f"Receipt email sent for order {order.ref}")
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to send receipt email for order {order.ref}: {str(e)}"
-                            )
-
-                        # Send order notification email to vendor
-                        try:
-                            send_vendor_order_notification(order)
-                            logger.info(
-                                f"Vendor notification sent for order {order.ref}"
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to send vendor notification for order {order.ref}: {str(e)}"
-                            )
-
-                        # Clear the user's cart items for this order
-                        # Note: We can't clear the session-based cart from webhook
-                        # but we can mark the order as paid so the frontend can handle it
-                        logger.info(f"Order {order.ref} marked as paid and completed")
-                    logger.info(f"Payment {reference} marked as paid")
-                else:
-                    logger.info(f"Payment {reference} was already marked paid")
-
-    return Response(status=200)
-
-
-@swagger_auto_schema(
-    method="post",
-    operation_description="Clear cart after successful payment",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        properties={
-            "order_ref": openapi.Schema(
-                type=openapi.TYPE_STRING,
-                description="Order reference to verify before clearing cart",
-            ),
-        },
-        required=[],  # No required fields since order_ref is optional
-    ),
-    responses={
-        200: openapi.Response(
-            description="Cart cleared successfully",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                    "message": openapi.Schema(type=openapi.TYPE_STRING),
-                },
-            ),
-        ),
-        400: openapi.Response(description="Invalid request"),
-        401: openapi.Response(description="Authentication required"),
-        404: openapi.Response(description="Order not found or not paid"),
-    },
-    tags=["Cart"],
-)
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def clear_cart_after_payment_api(request):
-    """
-    Clear the cart after successful payment verification.
-
-    This endpoint can be called by the frontend after a successful payment
-    to ensure the cart is cleared. Optionally verifies the order reference.
-    """
-    order_ref = request.data.get("order_ref")
-
-    if order_ref:
-        # Verify the order exists and is paid before clearing cart
-        try:
-            from store.models import Order
-
-            order = Order.objects.get(
-                ref=order_ref, created_by=request.user, is_paid=True
-            )
-        except Order.DoesNotExist:
-            return Response(
-                {"success": False, "message": "Order not found or not paid"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-    # Clear the cart
-    cart = Cart(request)
-    cart.clear()
-
-    return Response(
-        {"success": True, "message": "Cart cleared successfully"},
-        status=status.HTTP_200_OK,
-    )
-
-
-@swagger_auto_schema(
-    method="get",
-    operation_description="Get receipt for the most recent successful payment",
-    responses={
-        200: openapi.Response(
-            description="Receipt data for the most recent payment",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "order": openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                        properties={
-                            "order_id": openapi.Schema(type=openapi.TYPE_INTEGER),
-                            "ref": openapi.Schema(type=openapi.TYPE_STRING),
-                            "total_cost": openapi.Schema(type=openapi.TYPE_NUMBER),
-                            "pickup_location": openapi.Schema(type=openapi.TYPE_STRING),
-                            "is_paid": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                            "created_at": openapi.Schema(
-                                type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME
-                            ),
-                            "items": openapi.Schema(
-                                type=openapi.TYPE_ARRAY,
-                                items=openapi.Schema(type=openapi.TYPE_OBJECT),
-                            ),
-                        },
-                    ),
-                    "payment": openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                        properties={
-                            "amount": openapi.Schema(type=openapi.TYPE_NUMBER),
-                            "status": openapi.Schema(type=openapi.TYPE_STRING),
-                            "ref": openapi.Schema(type=openapi.TYPE_STRING),
-                            "created_at": openapi.Schema(
-                                type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME
-                            ),
-                        },
-                    ),
-                },
-            ),
-        ),
-        401: openapi.Response(description="Authentication required"),
-        404: openapi.Response(description="No recent successful payment found"),
-    },
-    tags=["Payment"],
-)
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def receipt_api(request):
-    """
-    Get receipt for the most recent successful payment.
-
-    Returns detailed information about the order and payment,
-    including all order items and their fulfillment status.
-    """
-    try:
-        payment = Payment.objects.filter(user=request.user, status="paid").latest(
-            "created_at"
-        )
-        order = payment.order
-    except Payment.DoesNotExist:
-        return Response(
-            {"detail": "No recent successful payment found."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    order_items = order.items.all()
-
-    order_data = {
-        "order_id": order.id,
-        "ref": order.ref,
-        "total_cost": order.total_cost,
-        "pickup_location": order.pickup_location,
-        "is_paid": order.is_paid,
-        "created_at": order.created_at,
+def _cart_payload(user):
+    lines = services.get_cart_lines(user)
+    ok_lines = [line for line in lines if not line.issue]
+    subtotal = sum(line.line_total for line in ok_lines)
+    fee = services.calculate_service_fee(subtotal)
+    return {
         "items": [
             {
-                "product_title": item.product.title,
-                "quantity": item.quantity,
-                "price": item.price,
-                "fulfilled": item.fulfilled,
+                "product": {
+                    "id": line.product.pk,
+                    "title": line.product.title,
+                    "slug": line.product.slug,
+                    "category_slug": line.product.category.slug,
+                    "thumbnail": line.product.get_thumbnail(),
+                    "price": line.product.price,
+                    "available_quantity": line.available_quantity,
+                    "vendor_name": line.product.vendor.store_name,
+                },
+                "quantity": line.quantity,
+                "line_total": line.line_total,
+                "issue": line.issue,
             }
-            for item in order_items
+            for line in lines
+        ],
+        "count": sum(line.quantity for line in lines),
+        "subtotal": subtotal,
+        "service_fee": fee,
+        "total": subtotal + fee,
+        "can_checkout": bool(lines) and len(ok_lines) == len(lines),
+        "max_quantity_per_item": services.MAX_QUANTITY_PER_ITEM,
+        "pickup_locations": [
+            {"value": value, "label": label} for value, label in Order.PICKUP_CHOICES
         ],
     }
 
-    payment_data = {
-        "amount": payment.amount,
-        "status": payment.status,
-        "ref": payment.ref,
-        "created_at": payment.created_at,
-    }
 
-    return Response(
-        {"order": order_data, "payment": payment_data}, status=status.HTTP_200_OK
+def _cart_mutation(request, mutate):
+    try:
+        mutate()
+    except services.CartError as exc:
+        return _error(
+            exc.message, status.HTTP_400_BAD_REQUEST, exc.code, cart=_cart_payload(request.user)
+        )
+    return Response(_cart_payload(request.user))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def cart_view_api(request):
+    return Response(_cart_payload(request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_add_to_cart(request):
+    return _cart_mutation(
+        request,
+        lambda: services.add_to_cart(
+            request.user, request.data.get("product_id"), request.data.get("quantity", 1)
+        ),
     )
 
 
-@swagger_auto_schema(
-    method="post",
-    operation_description="Verify payment status after frontend redirect",
-    security=[{"Bearer": []}],  # Add JWT auth requirement for Swagger
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        required=["reference"],
-        properties={
-            "reference": openapi.Schema(
-                type=openapi.TYPE_STRING, description="Payment reference from Paystack"
-            ),
-        },
-    ),
-    responses={
-        200: openapi.Response(
-            description="Payment verified successfully",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                    "status": openapi.Schema(type=openapi.TYPE_STRING),
-                    "message": openapi.Schema(type=openapi.TYPE_STRING),
-                    "order": openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                        properties={
-                            "ref": openapi.Schema(type=openapi.TYPE_STRING),
-                            "total_cost": openapi.Schema(type=openapi.TYPE_NUMBER),
-                            "is_paid": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                            "items": openapi.Schema(
-                                type=openapi.TYPE_ARRAY,
-                                items=openapi.Schema(
-                                    type=openapi.TYPE_OBJECT,
-                                    properties={
-                                        "id": openapi.Schema(type=openapi.TYPE_INTEGER),
-                                        "product": openapi.Schema(
-                                            type=openapi.TYPE_OBJECT,
-                                            properties={
-                                                "id": openapi.Schema(
-                                                    type=openapi.TYPE_INTEGER
-                                                ),
-                                                "title": openapi.Schema(
-                                                    type=openapi.TYPE_STRING
-                                                ),
-                                                "slug": openapi.Schema(
-                                                    type=openapi.TYPE_STRING
-                                                ),
-                                                "price": openapi.Schema(
-                                                    type=openapi.TYPE_NUMBER
-                                                ),
-                                                "thumbnail": openapi.Schema(
-                                                    type=openapi.TYPE_STRING
-                                                ),
-                                            },
-                                        ),
-                                        "quantity": openapi.Schema(
-                                            type=openapi.TYPE_INTEGER
-                                        ),
-                                        "price": openapi.Schema(
-                                            type=openapi.TYPE_NUMBER
-                                        ),
-                                        "fulfilled": openapi.Schema(
-                                            type=openapi.TYPE_BOOLEAN
-                                        ),
-                                    },
-                                ),
-                            ),
-                        },
-                    ),
-                },
-            ),
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_change_quantity(request):
+    return _cart_mutation(
+        request,
+        lambda: services.change_cart_quantity(
+            request.user, request.data.get("product_id"), request.data.get("action")
         ),
-        400: openapi.Response(description="Payment verification failed"),
-        404: openapi.Response(description="Payment not found"),
-    },
-    tags=["Payment"],
-)
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_set_quantity(request):
+    return _cart_mutation(
+        request,
+        lambda: services.set_cart_quantity(
+            request.user, request.data.get("product_id"), request.data.get("quantity")
+        ),
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_remove_from_cart(request):
+    return _cart_mutation(
+        request,
+        lambda: services.remove_from_cart(request.user, request.data.get("product_id")),
+    )
+
+
+# ── Checkout & payment ──────────────────────────────────────────────────────
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def checkout_api(request):
+    serializer = CheckoutSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        result = services.start_checkout(request.user, **serializer.validated_data)
+    except services.CheckoutError as exc:
+        return _error(
+            exc.message,
+            status.HTTP_409_CONFLICT if exc.problems else status.HTTP_400_BAD_REQUEST,
+            exc.code,
+            problems=exc.problems,
+            cart=_cart_payload(request.user),
+        )
+    except paystack.PaystackError as exc:
+        return _error(
+            f"We couldn't start your payment: {exc.message} You haven't been charged.",
+            status.HTTP_502_BAD_GATEWAY,
+            "payment_provider_error",
+        )
+    return Response(result)
+
+
+def _buyer_order_response(user, order, payment_status):
+    orders = list(services.orders_with_items().filter(pk=order.pk))
+    reviews = services.reviews_by_product_for(user, orders)
+    return {
+        "status": payment_status,
+        "order": services.order_payload(orders[0], reviews),
+    }
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def verify_payment_api(request):
-    """
-    Verify payment status after user returns from Paystack.
+    """Confirm a payment after the buyer returns from Paystack.
 
-    This endpoint should be called by the frontend after the user
-    is redirected back from Paystack to verify the payment status.
+    Always answers with ``status`` = ``paid``, ``pending`` or ``failed`` so the
+    client can tell the buyer exactly where their money stands.
     """
-    reference = request.data.get("reference")
+    reference = (request.data.get("reference") or "").strip()
     if not reference:
-        return Response(
-            {"success": False, "message": "Payment reference is required"}, status=400
-        )
+        return _error("Payment reference is required.", status.HTTP_400_BAD_REQUEST)
 
-    try:
-        payment = Payment.objects.get(ref=reference, user=request.user)
-    except Payment.DoesNotExist:
-        return Response({"success": False, "message": "Payment not found"}, status=404)
+    payment = Payment.objects.filter(ref=reference, user=request.user).select_related("order").first()
+    if payment is None:
+        return _error("We couldn't find that payment.", status.HTTP_404_NOT_FOUND, "not_found")
 
-    # Verify with Paystack
-    url = f"{settings.PAYSTACK_BASE_URL}/transaction/verify/{reference}"
-    headers = {"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"}
-
-    try:
-        response = requests.get(url, headers=headers)
-        data = response.json()
-    except Exception as e:
-        return Response(
-            {"success": False, "message": f"Verification error: {str(e)}"}, status=500
-        )
-
-    if response.status_code != 200 or not data.get("status"):
-        return Response(
-            {"success": False, "message": "Failed to verify payment with Paystack"},
-            status=400,
-        )
-
-    payment_data = data["data"]
-
-    if payment_data["status"] == "success":
-        # Update payment status
-        payment.status = "paid"
-        payment.save()
-
-        # Update order status
-        order = payment.order
-        order.is_paid = True
-        if hasattr(order, "status"):
-            order.status = "completed"
-        order.save()
-
-        # Clear cart
-        cart = Cart(request)
-        cart.clear()
-
-        # Send receipt email in the background
+    if payment.status != Payment.PAID:
         try:
-            send_receipt_email(order)
-            email_message = "Receipt email sent successfully!"
-        except Exception as e:
-            # Log the error but don't fail the payment verification
-            logger.error(
-                f"Failed to send receipt email for order {order.ref}: {str(e)}"
-            )
-            email_message = "Payment verified (receipt email failed to send)."
+            payment = services.confirm_order_payment(reference) or payment
+        except paystack.PaystackError:
+            # Paystack is unreachable; the webhook will still complete the
+            # order. Tell the buyer it is pending rather than failed.
+            logger.warning("Could not verify payment %s with Paystack", reference)
 
-        # Get order items with product details
-        order_items = OrderItem.objects.filter(order=order).select_related("product")
-        items_data = []
-        for item in order_items:
-            items_data.append(
-                {
-                    "id": item.id,
-                    "product": {
-                        "id": item.product.id,
-                        "title": item.product.title,
-                        "slug": item.product.slug,
-                        "price": item.product.price,
-                        "thumbnail": item.product.get_thumbnail(),
-                    },
-                    "quantity": item.quantity,
-                    "price": item.price,
-                    "fulfilled": item.fulfilled,
-                }
-            )
-
-        return Response(
-            {
-                "success": True,
-                "status": "paid",
-                "message": f"Payment verified successfully! {email_message}",
-                "order": {
-                    "ref": order.ref,
-                    "total_cost": order.total_cost,
-                    "is_paid": order.is_paid,
-                    "items": items_data,
-                },
-            },
-            status=200,
-        )
-    else:
-        payment.status = "failed"
-        payment.save()
-        return Response(
-            {
-                "success": False,
-                "status": "failed",
-                "message": "Payment was not successful",
-            },
-            status=400,
-        )
+    return Response(_buyer_order_response(request.user, payment.order, payment.status))
 
 
-# Order History API
-@swagger_auto_schema(
-    method="get",
-    operation_summary="Get User Order History",
-    operation_description="Get all orders for the authenticated user",
-    security=[{"Bearer": []}],  # Add JWT auth requirement for Swagger
-    responses={
-        200: openapi.Response(
-            description="Orders retrieved successfully",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                    "orders": openapi.Schema(
-                        type=openapi.TYPE_ARRAY,
-                        items=openapi.Schema(
-                            type=openapi.TYPE_OBJECT,
-                            properties={
-                                "ref": openapi.Schema(type=openapi.TYPE_STRING),
-                                "total_cost": openapi.Schema(type=openapi.TYPE_NUMBER),
-                                "status": openapi.Schema(type=openapi.TYPE_STRING),
-                                "created_at": openapi.Schema(type=openapi.TYPE_STRING),
-                                "items": openapi.Schema(
-                                    type=openapi.TYPE_ARRAY,
-                                    items=openapi.Schema(
-                                        type=openapi.TYPE_OBJECT,
-                                        properties={
-                                            "product": openapi.Schema(
-                                                type=openapi.TYPE_OBJECT,
-                                                properties={
-                                                    "title": openapi.Schema(
-                                                        type=openapi.TYPE_STRING
-                                                    ),
-                                                    "slug": openapi.Schema(
-                                                        type=openapi.TYPE_STRING
-                                                    ),
-                                                    "price": openapi.Schema(
-                                                        type=openapi.TYPE_NUMBER
-                                                    ),
-                                                    "thumbnail": openapi.Schema(
-                                                        type=openapi.TYPE_STRING
-                                                    ),
-                                                },
-                                            ),
-                                            "quantity": openapi.Schema(
-                                                type=openapi.TYPE_INTEGER
-                                            ),
-                                            "price": openapi.Schema(
-                                                type=openapi.TYPE_NUMBER
-                                            ),
-                                            "fulfilled": openapi.Schema(
-                                                type=openapi.TYPE_BOOLEAN
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            },
-                        ),
-                    ),
-                },
-            ),
-        ),
-        401: openapi.Response(description="Unauthorized"),
-    },
-    tags=["Orders"],
-)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def order_history_api(request):
-    """
-    Get all orders for the authenticated user.
+    orders = services.orders_with_items().filter(
+        created_by=request.user, is_paid=True
+    ).order_by("-paid_at", "-created_at")
 
-    Returns a list of all orders made by the user, including order details
-    and items within each order. Orders are sorted by creation date (newest first).
-    """
-    # request.user is already a UserProfile instance (custom user model)
-    user_profile = request.user
-
-    # Get all orders for this user, ordered by newest first
-    orders = Payment.objects.filter(user=user_profile, status="paid").order_by(
-        "-created_at"
-    )
-
-    orders_data = []
-    for payment in orders:
-        # Get all items for this order through the payment's order
-        order_items = OrderItem.objects.filter(order=payment.order)
-        items_data = []
-
-        for item in order_items:
-            # Check if the user has reviewed this product
-            user_review = Review.objects.filter(
-                product=item.product, author=user_profile
-            ).first()
-
-            review_data = None
-            if user_review:
-                review_data = {
-                    "id": user_review.pk,
-                    "rating": user_review.rating,
-                    "text": user_review.text,
-                    "subject": user_review.subject,
-                    "created_date": user_review.created_date.isoformat(),
-                    "approved_review": user_review.approved_review,
-                }
-
-            items_data.append(
-                {
-                    "product": {
-                        "id": item.product.pk,
-                        "title": item.product.title,
-                        "slug": item.product.slug,
-                        "price": item.product.price,
-                        "thumbnail": item.product.get_thumbnail(),
-                    },
-                    "quantity": item.quantity,
-                    "price": item.price,
-                    "fulfilled": item.fulfilled,
-                    "my_review": review_data,
-                }
-            )
-
-        orders_data.append(
-            {
-                "ref": payment.ref,
-                "total_cost": payment.amount,  # Payment model uses 'amount' field
-                "status": payment.status,
-                "created_at": payment.created_at.isoformat(),
-                "items": items_data,
-            }
-        )
-
-    return Response(
-        {
-            "success": True,
-            "orders": orders_data,
-        },
-        status=200,
+    paginator = StandardResultsPagination()
+    page = paginator.paginate_queryset(orders, request)
+    reviews = services.reviews_by_product_for(request.user, page)
+    return paginator.get_paginated_response(
+        [services.order_payload(order, reviews) for order in page]
     )
 
 
-@swagger_auto_schema(
-    method="get",
-    operation_description="Get list of all banks from Paystack",
-    responses={
-        200: openapi.Response(
-            description="Banks retrieved successfully",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "status": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                    "message": openapi.Schema(type=openapi.TYPE_STRING),
-                    "data": openapi.Schema(
-                        type=openapi.TYPE_ARRAY,
-                        items=openapi.Schema(
-                            type=openapi.TYPE_OBJECT,
-                            properties={
-                                "name": openapi.Schema(type=openapi.TYPE_STRING),
-                                "slug": openapi.Schema(type=openapi.TYPE_STRING),
-                                "code": openapi.Schema(type=openapi.TYPE_STRING),
-                                "longcode": openapi.Schema(type=openapi.TYPE_STRING),
-                                "gateway": openapi.Schema(type=openapi.TYPE_STRING),
-                                "pay_with_bank": openapi.Schema(
-                                    type=openapi.TYPE_BOOLEAN
-                                ),
-                                "active": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                                "country": openapi.Schema(type=openapi.TYPE_STRING),
-                                "currency": openapi.Schema(type=openapi.TYPE_STRING),
-                                "type": openapi.Schema(type=openapi.TYPE_STRING),
-                            },
-                        ),
-                    ),
-                },
-            ),
-        ),
-        500: openapi.Response(description="Error fetching banks from Paystack"),
-    },
-    tags=["Banking"],
-)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def buyer_order_detail_api(request, ref):
+    order = get_object_or_404(Order, ref=ref, created_by=request.user)
+    payment = order.payments.order_by("-created_at").first()
+    payment_status = payment.status if payment else (Payment.PAID if order.is_paid else Payment.PENDING)
+    return Response(_buyer_order_response(request.user, order, payment_status))
+
+
+# ── Banking (vendor onboarding) ─────────────────────────────────────────────
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def get_banks_api(request):
-    """
-    Get list of all banks from Paystack.
-
-    This endpoint fetches the current list of supported banks from Paystack.
-    No authentication required.
-    """
-    try:
-        url = f"{settings.PAYSTACK_BASE_URL}/bank"
-        headers = {
-            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
-            "Content-Type": "application/json",
-        }
-
-        response = requests.get(url, headers=headers)
-
-        if response.status_code == 200:
-            data = response.json()
-            return Response(data, status=status.HTTP_200_OK)
-        else:
-            return Response(
-                {
-                    "status": False,
-                    "message": "Failed to fetch banks from Paystack",
-                    "error": response.text,
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    """Nigerian banks supported for vendor payouts (cached; changes rarely)."""
+    banks = cache.get(BANKS_CACHE_KEY)
+    if banks is None:
+        try:
+            data = paystack.list_banks()
+        except paystack.PaystackError:
+            return _error(
+                "We couldn't load the list of banks. Please try again shortly.",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-
-    except requests.RequestException as e:
-        return Response(
-            {
-                "status": False,
-                "message": "Network error while fetching banks",
-                "error": str(e),
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        banks = sorted(
+            (
+                {"name": bank["name"], "code": bank["code"]}
+                for bank in data
+                if bank.get("active", True) and bank.get("code") in VALID_BANK_CODES
+            ),
+            key=lambda bank: bank["name"],
         )
-    except Exception as e:
-        return Response(
-            {
-                "status": False,
-                "message": "An unexpected error occurred",
-                "error": str(e),
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        cache.set(BANKS_CACHE_KEY, banks, BANKS_CACHE_SECONDS)
+    return Response({"data": banks})
 
 
-@swagger_auto_schema(
-    method="post",
-    operation_description="Verify bank account details using Paystack",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        required=["account_number", "bank_code"],
-        properties={
-            "account_number": openapi.Schema(
-                type=openapi.TYPE_STRING,
-                description="Bank account number",
-                example="0123456789",
-            ),
-            "bank_code": openapi.Schema(
-                type=openapi.TYPE_STRING,
-                description="Bank code from the banks list",
-                example="044",
-            ),
-        },
-    ),
-    responses={
-        200: openapi.Response(
-            description="Account verification successful",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    "status": openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                    "message": openapi.Schema(type=openapi.TYPE_STRING),
-                    "data": openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                        properties={
-                            "account_number": openapi.Schema(type=openapi.TYPE_STRING),
-                            "account_name": openapi.Schema(type=openapi.TYPE_STRING),
-                            "bank_id": openapi.Schema(type=openapi.TYPE_INTEGER),
-                        },
-                    ),
-                },
-            ),
-        ),
-        400: openapi.Response(
-            description="Invalid account details or validation failed"
-        ),
-        500: openapi.Response(description="Error verifying account with Paystack"),
-    },
-    tags=["Banking"],
-)
 @api_view(["POST"])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
+@throttle_classes([BankLookupThrottle])
 def verify_account_api(request):
-    """
-    Verify bank account details using Paystack.
+    """Resolve an account number to the holder's name before vendor signup."""
+    account_number = str(request.data.get("account_number", "")).strip()
+    bank_code = str(request.data.get("bank_code", "")).strip()
 
-    This endpoint verifies if the provided account number and bank code
-    correspond to a valid bank account and returns the account holder's name.
-    """
-    account_number = request.data.get("account_number")
-    bank_code = request.data.get("bank_code")
-
-    if not account_number or not bank_code:
-        return Response(
-            {
-                "status": False,
-                "message": "Account number and bank code are required",
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    # Basic validation for account number
     if not account_number.isdigit() or len(account_number) != 10:
-        return Response(
-            {
-                "status": False,
-                "message": "Account number must be exactly 10 digits",
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return _error("Account number must be exactly 10 digits.", status.HTTP_400_BAD_REQUEST)
+    if bank_code not in VALID_BANK_CODES:
+        return _error("Choose your bank from the list.", status.HTTP_400_BAD_REQUEST)
 
     try:
-        url = f"{settings.PAYSTACK_BASE_URL}/bank/resolve"
-        headers = {
-            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
-            "Content-Type": "application/json",
-        }
-
-        params = {
-            "account_number": account_number,
-            "bank_code": bank_code,
-        }
-
-        response = requests.get(url, headers=headers, params=params)
-        data = response.json()
-
-        if response.status_code == 200 and data.get("status"):
-            return Response(data, status=status.HTTP_200_OK)
-        else:
-            error_message = data.get("message", "Account verification failed")
-            return Response(
-                {
-                    "status": False,
-                    "message": error_message,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-    except requests.RequestException as e:
-        return Response(
-            {
-                "status": False,
-                "message": "Network error while verifying account",
-                "error": str(e),
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        data = paystack.resolve_account(account_number, bank_code)
+    except paystack.PaystackError:
+        return _error(
+            "We couldn't verify this account. Check the number and bank, then try again.",
+            status.HTTP_400_BAD_REQUEST,
         )
-    except Exception as e:
-        return Response(
-            {
-                "status": False,
-                "message": "An unexpected error occurred",
-                "error": str(e),
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    return Response(
+        {
+            "data": {
+                "account_number": data.get("account_number", account_number),
+                "account_name": data.get("account_name", ""),
+            }
+        }
+    )
