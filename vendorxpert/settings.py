@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "userprofile",
     "core",
     "store",
+    "operations",
     "phonenumber_field",
     "rest_framework",
     "rest_framework_simplejwt",

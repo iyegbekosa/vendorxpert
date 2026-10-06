@@ -12,6 +12,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from operations.config import get_settings
 from store.models import OrderItem, Product, Review
 from store.pagination import StandardResultsPagination
 from store.serializers import ProductSerializer, ProductWriteSerializer, with_rating_stats
@@ -79,7 +80,13 @@ def _rating_summary(reviews):
 @permission_classes([IsAuthenticated])
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 def register_vendor_api(request):
-    """Turn the signed-in buyer into a vendor with a 30-day free trial."""
+    """Turn the signed-in buyer into a vendor with a free trial."""
+    if not get_settings().vendor_signups_open:
+        return _error(
+            "New stores can't be opened right now. Please check back soon.",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "vendor_signups_closed",
+        )
     existing = getattr(request.user, "vendor_profile", None)
     if existing is not None:
         if existing.subaccount_code:
@@ -104,7 +111,7 @@ def register_vendor_api(request):
             "vendor_id": vendor.pk,
             "is_vendor": True,
             "store_details": store_details_payload(vendor),
-            "message": "Your store is ready. Your 30-day free trial has started.",
+            "message": "Your store is ready. Your free trial has started.",
         },
         status=status.HTTP_201_CREATED,
     )

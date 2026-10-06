@@ -128,6 +128,13 @@ def disable_subscription(subscription_code, email_token):
     )
 
 
+def refund_transaction(reference, merchant_note=""):
+    payload = {"transaction": reference}
+    if merchant_note:
+        payload["merchant_note"] = merchant_note[:200]
+    return request("POST", "refund", json=payload)
+
+
 def list_banks():
     return request("GET", "bank", params={"country": "nigeria", "perPage": 100})
 

@@ -7,6 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 
+from operations.config import get_settings
 from store.utils import PaystackError, create_paystack_subaccount
 from vendorxpert.uploads import media_url, validate_image_upload
 
@@ -22,7 +23,6 @@ from .phone_utils import normalize_and_validate_nigerian_phone
 
 logger = logging.getLogger(__name__)
 
-TRIAL_PERIOD_DAYS = 30
 STORE_DESCRIPTION_MAX_LENGTH = 500
 _FORBIDDEN_NAME_CHARS = set("<>&\"'")
 
@@ -245,6 +245,7 @@ class VendorRegisterSerializer(serializers.Serializer):
             or VendorPlan.objects.filter(is_active=True).order_by("price").first()
         )
         now = timezone.now()
+        trial_days = get_settings().trial_days
 
         with transaction.atomic():
             vendor = VendorProfile.objects.create(
@@ -257,7 +258,7 @@ class VendorRegisterSerializer(serializers.Serializer):
                 whatsapp_number=validated_data.get("whatsapp_number"),
                 subscription_status="trial",
                 trial_start=now,
-                trial_end=now + timedelta(days=TRIAL_PERIOD_DAYS),
+                trial_end=now + timedelta(days=trial_days),
                 is_verified=True,
             )
             if store_logo:
@@ -270,7 +271,7 @@ class VendorRegisterSerializer(serializers.Serializer):
                 event_type="trial_started",
                 new_plan=plan,
                 new_status="trial",
-                notes=f"{TRIAL_PERIOD_DAYS}-day free trial started",
+                notes=f"{trial_days}-day free trial started",
             )
 
         # External call outside the transaction so a slow Paystack doesn't

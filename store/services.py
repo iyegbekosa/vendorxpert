@@ -25,7 +25,12 @@ from .models import CartItem, Order, OrderItem, Payment, Product, Review
 
 logger = logging.getLogger(__name__)
 
-MAX_QUANTITY_PER_ITEM = 50
+
+
+def max_quantity_per_item():
+    from operations.config import get_settings
+
+    return get_settings().max_quantity_per_item
 
 # Paystack local-card pricing: 1.5% + NGN 100, the NGN 100 waived below
 # NGN 2,500, total capped at NGN 2,000. Buyers pay this on top of the item
@@ -162,7 +167,7 @@ def add_to_cart(user, product_id, quantity=1):
             user=user, product=product, defaults={"quantity": quantity}
         )
         new_quantity = quantity if created else item.quantity + quantity
-        limit = min(product.quantity, MAX_QUANTITY_PER_ITEM)
+        limit = min(product.quantity, max_quantity_per_item())
         if new_quantity > limit:
             if created:
                 item.delete()
@@ -185,7 +190,7 @@ def set_cart_quantity(user, product_id, quantity):
         # Only increases need the product to be purchasable; reducing an
         # unavailable item's quantity is always allowed.
         _get_purchasable_product(user, product.pk)
-        if quantity > min(product.quantity, MAX_QUANTITY_PER_ITEM):
+        if quantity > min(product.quantity, max_quantity_per_item()):
             raise CartError(_cap_message(product), "insufficient_stock")
     item.quantity = quantity
     item.save(update_fields=["quantity", "updated_at"])
@@ -269,6 +274,12 @@ def start_checkout(user, *, first_name, last_name, phone, pickup_location):
     The order is persisted *before* contacting Paystack so a webhook can never
     arrive for a payment we have no record of.
     """
+    from operations.config import get_settings
+
+    platform = get_settings()
+    if not platform.accepting_orders:
+        raise CheckoutError(platform.orders_paused_message, "orders_paused")
+
     lines = get_cart_lines(user)
     if not lines:
         raise CheckoutError("Your cart is empty.", "empty_cart")

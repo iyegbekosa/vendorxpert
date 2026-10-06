@@ -3,6 +3,7 @@ import re
 from django.db.models import Avg, Count, Q
 from rest_framework import serializers
 
+from operations.config import pickup_locations
 from userprofile.phone_utils import normalize_and_validate_nigerian_phone
 from vendorxpert.uploads import media_url, validate_image_upload
 
@@ -174,10 +175,7 @@ class CheckoutSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(max_length=50)
     last_name = serializers.CharField(max_length=50)
     phone = serializers.CharField()
-    pickup_location = serializers.ChoiceField(
-        choices=Order.PICKUP_CHOICES,
-        error_messages={"invalid_choice": "Choose where you'll pick up your order."},
-    )
+    pickup_location = serializers.CharField()
 
     class Meta:
         model = Order
@@ -199,3 +197,8 @@ class CheckoutSerializer(serializers.ModelSerializer):
 
     def validate_phone(self, value):
         return normalize_and_validate_nigerian_phone(value, "phone number")
+
+    def validate_pickup_location(self, value):
+        if value not in dict(pickup_locations()):
+            raise serializers.ValidationError("Choose where you'll pick up your order.")
+        return value

@@ -39,6 +39,7 @@ class Product(models.Model):
     WAITING_APPROVAL = "waiting approval"
     ACTIVE = "active"
     DELETED = "deleted"
+    HIDDEN = "hidden"
     IN_STOCK = "in stock"
     OUT_OF_STOCK = "out of stock"
 
@@ -47,6 +48,7 @@ class Product(models.Model):
         (WAITING_APPROVAL, "waiting approval"),
         (ACTIVE, "active"),
         (DELETED, "deleted"),
+        (HIDDEN, "hidden by staff"),
     )
 
     STOCK_CHOICES = (
@@ -98,11 +100,17 @@ class Product(models.Model):
         default=0, help_text="Available quantity in stock"
     )
     featured = models.BooleanField(default=False)
+    # Why staff hid this listing; shown to the vendor.
+    moderation_note = models.CharField(max_length=255, blank=True)
 
     objects = ProductQuerySet.as_manager()
 
     class Meta:
         ordering = ("-created_at",)
+        permissions = [
+            ("moderate_product", "Can hide or restore listings"),
+            ("feature_product", "Can feature or unfeature listings"),
+        ]
 
     def display_price(self):
         return self.price
@@ -204,6 +212,9 @@ class Review(models.Model):
     created_date = models.DateTimeField(default=timezone.now)
     approved_review = models.BooleanField(default=True)
 
+    class Meta:
+        permissions = [("moderate_review", "Can hide or restore reviews")]
+
     def disapprove(self):
         self.approved_review = False
         self.save()
@@ -230,6 +241,7 @@ class Order(models.Model):
     HALL_7 = "hall_7"
     HALL_8 = "hall_8"
 
+    # Initial pickup points; the live list is operations.PickupLocation.
     PICKUP_CHOICES = (
         (ADMIN, "Admin Block"),
         (FACULTY, "Faculty Building"),
@@ -250,9 +262,8 @@ class Order(models.Model):
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     phone = PhoneNumberField()
-    pickup_location = models.CharField(
-        max_length=50, choices=PICKUP_CHOICES, default=ADMIN
-    )
+    # Code of an operations.PickupLocation (admin-managed list).
+    pickup_location = models.CharField(max_length=50, default=ADMIN)
     # Sum of item prices in naira (what vendors receive).
     total_cost = models.IntegerField(blank=True, null=True)
     # Payment processing fee in naira, charged on top of total_cost.
@@ -263,9 +274,34 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     ref = models.CharField(max_length=50, unique=True)
 
+    REFUND_NONE = ""
+    REFUND_PENDING = "pending"
+    REFUND_PROCESSED = "processed"
+    REFUND_FAILED = "failed"
+    REFUND_CHOICES = [
+        (REFUND_NONE, "Not refunded"),
+        (REFUND_PENDING, "Refund pending"),
+        (REFUND_PROCESSED, "Refunded"),
+        (REFUND_FAILED, "Refund failed"),
+    ]
+    refund_status = models.CharField(max_length=12, choices=REFUND_CHOICES, blank=True, default="")
+    refund_requested_at = models.DateTimeField(null=True, blank=True)
+    refunded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        permissions = [
+            ("refund_order", "Can refund paid orders"),
+            ("recheck_payment", "Can re-check payments with Paystack"),
+        ]
+
     @property
     def amount_due(self):
         return (self.total_cost or 0) + self.service_fee
+
+    def get_pickup_location_display(self):
+        from operations.config import pickup_label
+
+        return pickup_label(self.pickup_location)
 
     def __str__(self):
         return f"Order {self.ref}"

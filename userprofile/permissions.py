@@ -33,7 +33,13 @@ class CanSell(IsVendor):
         vendor = get_vendor(request.user)
         if vendor.has_selling_access():
             return True
-        if vendor.subscription_status == "trial":
+        if vendor.is_suspended:
+            self.message = (
+                "Your store is suspended"
+                + (f": {vendor.suspension_reason}" if vendor.suspension_reason else "")
+                + ". Contact support to resolve it."
+            )
+        elif vendor.subscription_status == "trial":
             self.message = "Your free trial has ended. Choose a plan to keep selling."
         else:
             self.message = "Your subscription has expired. Renew it to keep selling."

@@ -415,6 +415,13 @@ def login_api(request):
 
     user = authenticate(request, username=email, password=password)
     if user is None:
+        inactive = UserProfile.objects.filter(email__iexact=email, is_active=False).first()
+        if inactive is not None and inactive.check_password(password):
+            return _error(
+                "This account has been suspended. Contact support if you think this is a mistake.",
+                status.HTTP_403_FORBIDDEN,
+                "account_suspended",
+            )
         if EmailVerification.objects.filter(
             email=email, verification_type="signup", is_used=False
         ).exists():

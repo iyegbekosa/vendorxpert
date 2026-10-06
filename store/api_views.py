@@ -11,6 +11,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
+from operations.config import get_settings, pickup_locations
 from userprofile.bank_codes import VALID_BANK_CODES
 
 from . import paystack, services
@@ -251,11 +252,12 @@ def _cart_payload(user):
         "subtotal": subtotal,
         "service_fee": fee,
         "total": subtotal + fee,
-        "can_checkout": bool(lines) and len(ok_lines) == len(lines),
-        "max_quantity_per_item": services.MAX_QUANTITY_PER_ITEM,
+        "can_checkout": bool(lines) and len(ok_lines) == len(lines) and get_settings().accepting_orders,
+        "max_quantity_per_item": services.max_quantity_per_item(),
         "pickup_locations": [
-            {"value": value, "label": label} for value, label in Order.PICKUP_CHOICES
+            {"value": value, "label": label} for value, label in pickup_locations()
         ],
+        "accepting_orders": get_settings().accepting_orders,
     }
 
 

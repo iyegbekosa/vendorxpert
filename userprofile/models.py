@@ -15,9 +15,13 @@ from phonenumber_field.modelfields import PhoneNumberField
 
 logger = logging.getLogger(__name__)
 
-# Days a paid subscription keeps selling access after it lapses, giving the
-# vendor time to renew before their listings disappear.
-SUBSCRIPTION_GRACE_DAYS = 7
+
+
+def grace_days():
+    """Days a lapsed paid vendor keeps selling (admin-managed setting)."""
+    from operations.config import get_settings
+
+    return get_settings().grace_days
 
 
 def normalize_email_address(email):
@@ -121,6 +125,9 @@ class UserProfile(AbstractBaseUser, PermissionsMixin):
 
     objects = CustomAccountManager()
     USERNAME_FIELD = "email"
+
+    class Meta:
+        permissions = [("suspend_user", "Can suspend or restore user accounts")]
     REQUIRED_FIELDS = ["user_name", "first_name", "last_name"]
 
     def __str__(self):
@@ -196,7 +203,7 @@ def selling_access_q(prefix=""):
     paid = Q(
         **{
             f"{field('subscription_status')}__in": ["active", "grace"],
-            f"{field('subscription_expiry')}__gte": now - timedelta(days=SUBSCRIPTION_GRACE_DAYS),
+            f"{field('subscription_expiry')}__gte": now - timedelta(days=grace_days()),
         }
     ) | Q(
         **{
@@ -211,7 +218,8 @@ def selling_access_q(prefix=""):
         }
     )
     paused = Q(**{field("subscription_status"): "paused"})
-    return in_trial | paid | cancelled_but_paid_up | paused
+    not_suspended = Q(**{field("is_suspended"): False, field("user__is_active"): True})
+    return not_suspended & (in_trial | paid | cancelled_but_paid_up | paused)
 
 
 class VendorPlan(models.Model):
@@ -285,6 +293,10 @@ class VendorProfile(models.Model):
     instagram_handle = models.CharField(max_length=50, blank=True)
     tiktok_handle = models.CharField(max_length=50, blank=True)
     is_verified = models.BooleanField(default=False)
+    # Staff-imposed suspension: listings are hidden and no new orders can be
+    # placed, but the vendor can still log in and complete paid orders.
+    is_suspended = models.BooleanField(default=False, db_index=True)
+    suspension_reason = models.CharField(max_length=255, blank=True)
     plan = models.ForeignKey(VendorPlan, on_delete=models.SET_NULL, null=True)
     # Plan the vendor switches to at the next billing date (downgrades).
     scheduled_plan = models.ForeignKey(
@@ -316,8 +328,11 @@ class VendorProfile(models.Model):
     paused_at = models.DateTimeField(null=True, blank=True)
     failed_payment_count = models.PositiveIntegerField(default=0)
 
+    class Meta:
+        permissions = [("suspend_vendor", "Can suspend or restore vendor stores")]
+
     def __str__(self):
-        return f"{self.store_name} (Vendor: {self.user.user_name})"
+        return self.store_name
 
     def clean(self):
         from django.core.exceptions import ValidationError
@@ -361,7 +376,7 @@ class VendorProfile(models.Model):
             if self.subscription_status in ["active", "grace"]:
                 if now <= self.subscription_expiry:
                     return "active"
-                if now <= self.subscription_expiry + timedelta(days=SUBSCRIPTION_GRACE_DAYS):
+                if now <= self.subscription_expiry + timedelta(days=grace_days()):
                     return "grace"
                 return "expired"
 
@@ -382,6 +397,8 @@ class VendorProfile(models.Model):
 
         Mirrors ``selling_access_q`` — keep the two in sync.
         """
+        if self.is_suspended or not self.user.is_active:
+            return False
         if self.has_active_trial():
             return True
 
@@ -397,7 +414,7 @@ class VendorProfile(models.Model):
             return self.subscription_status == "active"
 
         return self.subscription_status in ["active", "grace"] and (
-            now <= self.subscription_expiry + timedelta(days=SUBSCRIPTION_GRACE_DAYS)
+            now <= self.subscription_expiry + timedelta(days=grace_days())
         )
 
     # Backwards-compatible name used throughout the codebase.
@@ -420,7 +437,7 @@ class VendorProfile(models.Model):
         now = timezone.now()
         return (
             now > self.subscription_expiry
-            and now <= self.subscription_expiry + timedelta(days=SUBSCRIPTION_GRACE_DAYS)
+            and now <= self.subscription_expiry + timedelta(days=grace_days())
         )
 
     def start_trial(self, days=30):

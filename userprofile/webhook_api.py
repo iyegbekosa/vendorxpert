@@ -41,6 +41,18 @@ def _handle_charge_failed(data):
         confirm_order_payment(reference, transaction_data=data)
 
 
+def _handle_refund_processed(data):
+    from operations.services import apply_refund_event
+
+    apply_refund_event(data, processed=True)
+
+
+def _handle_refund_failed(data):
+    from operations.services import apply_refund_event
+
+    apply_refund_event(data, processed=False)
+
+
 EVENT_HANDLERS = {
     "charge.success": _handle_charge_success,
     "charge.failed": _handle_charge_failed,
@@ -48,6 +60,8 @@ EVENT_HANDLERS = {
     "subscription.disable": services.handle_subscription_disabled,
     "subscription.not_renew": services.handle_subscription_disabled,
     "invoice.payment_failed": services.handle_invoice_payment_failed,
+    "refund.processed": _handle_refund_processed,
+    "refund.failed": _handle_refund_failed,
 }
 
 
