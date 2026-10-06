@@ -1,19 +1,32 @@
-from django.db import models
-from django.utils import timezone
-from django.utils.translation import gettext_lazy as _
+import logging
+from datetime import timedelta
+
+from cloudinary.models import CloudinaryField
 from django.contrib.auth.models import (
     AbstractBaseUser,
-    PermissionsMixin,
     BaseUserManager,
+    PermissionsMixin,
 )
-from phonenumber_field.modelfields import PhoneNumberField
-from datetime import timedelta
+from django.db import models
+from django.db.models import Q
 from django.utils import timezone
-import uuid
-import logging
-from cloudinary.models import CloudinaryField
+from django.utils.translation import gettext_lazy as _
+from phonenumber_field.modelfields import PhoneNumberField
 
 logger = logging.getLogger(__name__)
+
+
+
+def grace_days():
+    """Days a lapsed paid vendor keeps selling (admin-managed setting)."""
+    from operations.config import get_settings
+
+    return get_settings().grace_days
+
+
+def normalize_email_address(email):
+    """Emails are case-insensitive for identity purposes; store them lowercased."""
+    return (email or "").strip().lower()
 
 
 class CustomAccountManager(BaseUserManager):
@@ -24,7 +37,7 @@ class CustomAccountManager(BaseUserManager):
         if not email:
             raise ValueError(_("You must provide a valid email address"))
 
-        email = self.normalize_email(email)
+        email = normalize_email_address(email)
         user = self.model(
             email=email,
             user_name=user_name,
@@ -53,6 +66,20 @@ class CustomAccountManager(BaseUserManager):
         return self.create_user(
             email, user_name, first_name, last_name, password, **other_fields
         )
+
+    def get_by_natural_key(self, username):
+        """Case-insensitive login lookup.
+
+        Older accounts may have been stored with mixed-case emails, so try an
+        exact match first and only then fall back to a case-insensitive one.
+        """
+        try:
+            return self.get(email=username)
+        except self.model.DoesNotExist:
+            try:
+                return self.get(email__iexact=normalize_email_address(username))
+            except self.model.MultipleObjectsReturned:
+                raise self.model.DoesNotExist
 
 
 class UserProfile(AbstractBaseUser, PermissionsMixin):
@@ -98,6 +125,9 @@ class UserProfile(AbstractBaseUser, PermissionsMixin):
 
     objects = CustomAccountManager()
     USERNAME_FIELD = "email"
+
+    class Meta:
+        permissions = [("suspend_user", "Can suspend or restore user accounts")]
     REQUIRED_FIELDS = ["user_name", "first_name", "last_name"]
 
     def __str__(self):
@@ -118,8 +148,13 @@ class EmailVerification(models.Model):
         ("password_reset", "Password Reset"),
     )
 
+    MAX_ATTEMPTS = 5
+
     email = models.EmailField()
     code = models.CharField(max_length=6)
+    # Failed code submissions. The code is invalidated after MAX_ATTEMPTS so a
+    # 6-digit OTP cannot be brute-forced.
+    attempts = models.PositiveSmallIntegerField(default=0)
     verification_type = models.CharField(
         max_length=20, choices=VERIFICATION_TYPES, default="signup"
     )
@@ -136,9 +171,55 @@ class EmailVerification(models.Model):
     def is_expired(self):
         return timezone.now() > self.expires_at
 
+    def is_locked(self):
+        return self.attempts >= self.MAX_ATTEMPTS
+
     def mark_used(self):
         self.is_used = True
         self.save()
+
+
+def selling_access_q(prefix=""):
+    """Database filter equivalent of ``VendorProfile.has_selling_access``.
+
+    ``prefix`` lets callers apply it across relations, e.g. ``"vendor__"`` when
+    filtering products. Keep both implementations in sync (covered by tests).
+    """
+    now = timezone.now()
+
+    def field(name):
+        return f"{prefix}{name}"
+
+    in_trial = Q(**{field("subscription_status"): "trial"}) & (
+        Q(**{f"{field('trial_end')}__isnull": True})
+        | (
+            Q(**{f"{field('trial_end')}__gte": now})
+            & (
+                Q(**{f"{field('trial_start')}__isnull": True})
+                | Q(**{f"{field('trial_start')}__lte": now})
+            )
+        )
+    )
+    paid = Q(
+        **{
+            f"{field('subscription_status')}__in": ["active", "grace"],
+            f"{field('subscription_expiry')}__gte": now - timedelta(days=grace_days()),
+        }
+    ) | Q(
+        **{
+            field("subscription_status"): "active",
+            f"{field('subscription_expiry')}__isnull": True,
+        }
+    )
+    cancelled_but_paid_up = Q(
+        **{
+            field("subscription_status"): "cancelled",
+            f"{field('subscription_expiry')}__gte": now,
+        }
+    )
+    paused = Q(**{field("subscription_status"): "paused"})
+    not_suspended = Q(**{field("is_suspended"): False, field("user__is_active"): True})
+    return not_suspended & (in_trial | paid | cancelled_but_paid_up | paused)
 
 
 class VendorPlan(models.Model):
@@ -197,15 +278,34 @@ class VendorProfile(models.Model):
         max_length=100, unique=True, null=True, blank=True
     )
     paystack_subscription_code = models.CharField(max_length=100, blank=True, null=True)
+    # Paystack "email_token" for the current subscription; required to disable it.
     subscription_token = models.CharField(max_length=255, blank=True, null=True)
+    # Reference of a subscription/plan-change payment the vendor has started
+    # but which is not yet confirmed.
     pending_ref = models.CharField(max_length=50, blank=True, null=True)
+    # Reusable card authorisation and customer from the last subscription
+    # payment; needed to move the recurring billing to a different plan.
+    paystack_customer_code = models.CharField(max_length=100, blank=True, default="")
+    paystack_authorization_code = models.CharField(max_length=100, blank=True, default="")
     whatsapp_number = PhoneNumberField(unique=True, null=True, blank=True, region="NG")
     account_number = models.CharField(max_length=20, null=True, blank=True)
     bank_code = models.CharField(max_length=10, null=True, blank=True)
     instagram_handle = models.CharField(max_length=50, blank=True)
     tiktok_handle = models.CharField(max_length=50, blank=True)
     is_verified = models.BooleanField(default=False)
+    # Staff-imposed suspension: listings are hidden and no new orders can be
+    # placed, but the vendor can still log in and complete paid orders.
+    is_suspended = models.BooleanField(default=False, db_index=True)
+    suspension_reason = models.CharField(max_length=255, blank=True)
     plan = models.ForeignKey(VendorPlan, on_delete=models.SET_NULL, null=True)
+    # Plan the vendor switches to at the next billing date (downgrades).
+    scheduled_plan = models.ForeignKey(
+        VendorPlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="scheduled_vendors",
+    )
     subscription_start = models.DateTimeField(auto_now_add=True)
     subscription_expiry = models.DateTimeField(null=True, blank=True)
     subscription_status = models.CharField(
@@ -228,8 +328,11 @@ class VendorProfile(models.Model):
     paused_at = models.DateTimeField(null=True, blank=True)
     failed_payment_count = models.PositiveIntegerField(default=0)
 
+    class Meta:
+        permissions = [("suspend_vendor", "Can suspend or restore vendor stores")]
+
     def __str__(self):
-        return f"{self.store_name} (Vendor: {self.user.user_name})"
+        return self.store_name
 
     def clean(self):
         from django.core.exceptions import ValidationError
@@ -246,8 +349,10 @@ class VendorProfile(models.Model):
 
     def has_active_trial(self):
         """Return True when the vendor is inside a valid trial window."""
+        if self.subscription_status != "trial":
+            return False
         if not self.trial_end:
-            return self.subscription_status == "trial"
+            return True
 
         now = timezone.now()
         if self.trial_start and now < self.trial_start:
@@ -271,9 +376,13 @@ class VendorProfile(models.Model):
             if self.subscription_status in ["active", "grace"]:
                 if now <= self.subscription_expiry:
                     return "active"
-                if now <= self.subscription_expiry + timedelta(days=7):
+                if now <= self.subscription_expiry + timedelta(days=grace_days()):
                     return "grace"
                 return "expired"
+
+        if self.subscription_status == "trial":
+            # Trial window has passed and no paid subscription replaced it.
+            return "expired"
 
         return self.subscription_status
 
@@ -283,26 +392,33 @@ class VendorProfile(models.Model):
             return self.trial_end
         return self.subscription_expiry
 
-    def is_subscription_active(self):
-        """Check if subscription provides active access"""
-        if self.subscription_status == "cancelled":
-            return False
+    def has_selling_access(self):
+        """Whether the vendor may list products and receive orders.
 
+        Mirrors ``selling_access_q`` — keep the two in sync.
+        """
+        if self.is_suspended or not self.user.is_active:
+            return False
         if self.has_active_trial():
             return True
 
         if self.subscription_status == "paused":
             return True  # Paused subscriptions maintain access
 
+        now = timezone.now()
+        if self.subscription_status == "cancelled":
+            # Cancelling stops renewal; the vendor keeps what they paid for.
+            return bool(self.subscription_expiry and now <= self.subscription_expiry)
+
         if not self.subscription_expiry:
             return self.subscription_status == "active"
 
-        now = timezone.now()
-        # Active period or grace period (7 days after expiry)
         return self.subscription_status in ["active", "grace"] and (
-            now <= self.subscription_expiry
-            or now <= self.subscription_expiry + timedelta(days=7)
+            now <= self.subscription_expiry + timedelta(days=grace_days())
         )
+
+    # Backwards-compatible name used throughout the codebase.
+    is_subscription_active = has_selling_access
 
     def get_subscription_days_remaining(self):
         """Get days remaining in subscription"""
@@ -321,7 +437,7 @@ class VendorProfile(models.Model):
         now = timezone.now()
         return (
             now > self.subscription_expiry
-            and now <= self.subscription_expiry + timedelta(days=7)
+            and now <= self.subscription_expiry + timedelta(days=grace_days())
         )
 
     def start_trial(self, days=30):
@@ -338,78 +454,22 @@ class VendorProfile(models.Model):
             notes=f"Started {days}-day trial period",
         )
 
-    def pause_subscription(self, reason=""):
-        """Pause the subscription"""
-        if self.subscription_status not in ["active", "grace"]:
-            return False
+    def paid_period_start(self):
+        """When a newly paid 30-day period should start.
 
-        old_status = self.subscription_status
-        self.subscription_status = "paused"
-        self.pause_reason = reason
-        self.paused_at = timezone.now()
-        self.save()
-
-        # Log the event
-        SubscriptionHistory.log_event(
-            vendor=self,
-            event_type="subscription_paused",
-            previous_status=old_status,
-            new_status="paused",
-            notes=reason,
-        )
-        return True
-
-    def resume_subscription(self):
-        """Resume a paused subscription"""
-        if self.subscription_status != "paused":
-            return False
-
-        self.subscription_status = "active"
-        self.pause_reason = ""
-        self.paused_at = None
-        self.save()
-
-        # Log the event
-        SubscriptionHistory.log_event(
-            vendor=self,
-            event_type="subscription_resumed",
-            previous_status="paused",
-            new_status="active",
-        )
-        return True
-
-    def change_plan_with_payment(self, new_plan, immediate=False, request=None):
-        from .services import change_plan_with_payment as _svc
-        return _svc(self, new_plan, immediate=immediate, request=request)
-
-    def _update_paystack_subscription(self, new_plan):
-        from .services import update_paystack_subscription as _svc
-        return _svc(self, new_plan)
-
-    def extend_subscription(self, days=30):
-        """Extend subscription by specified days"""
-        if self.subscription_expiry:
-            # If subscription is still active, extend from expiry date
-            if timezone.now() <= self.subscription_expiry:
-                self.subscription_expiry += timedelta(days=days)
-            else:
-                # If expired, extend from now
-                self.subscription_expiry = timezone.now() + timedelta(days=days)
-        else:
-            # No expiry set, create one
-            self.subscription_expiry = timezone.now() + timedelta(days=days)
-
-        self.subscription_status = "active"
-        self.last_payment_date = timezone.now()
-        self.failed_payment_count = 0  # Reset failed payment count
-        self.save()
-
-        # Log the event
-        SubscriptionHistory.log_event(
-            vendor=self,
-            event_type="subscription_renewed",
-            notes=f"Subscription extended by {days} days",
-        )
+        Paying early never loses time: an unexpired trial or paid period is
+        honoured and the new period starts when it ends.
+        """
+        now = timezone.now()
+        candidates = [now]
+        if self.has_active_trial() and self.trial_end:
+            candidates.append(self.trial_end)
+        if (
+            self.subscription_status in ("active", "grace", "cancelled")
+            and self.subscription_expiry
+        ):
+            candidates.append(self.subscription_expiry)
+        return max(candidates)
 
 
 class SubscriptionHistory(models.Model):

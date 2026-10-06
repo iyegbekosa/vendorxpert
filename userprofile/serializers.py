@@ -1,30 +1,71 @@
-# userprofile/serializers.py
-from rest_framework import serializers
-from .models import UserProfile, VendorProfile, VendorPlan, SubscriptionHistory
-from .phone_utils import normalize_and_validate_nigerian_phone
-from store.serializers import Product, ProductSerializer
-from store.models import OrderItem, Order
-from django.utils.text import slugify
-from datetime import timedelta
-from django.utils import timezone
-from store.utils import create_paystack_subaccount, PaystackError
-import requests
-from django.core.files.base import ContentFile
-from urllib.parse import urlparse
-import os
 import logging
-from typing import Any
+from datetime import timedelta
+
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
+from django.utils import timezone
+from rest_framework import serializers
+
+from operations.config import get_settings
+from store.utils import PaystackError, create_paystack_subaccount
+from vendorxpert.uploads import media_url, validate_image_upload
+
+from .bank_codes import VALID_BANK_CODES
+from .models import (
+    SubscriptionHistory,
+    UserProfile,
+    VendorPlan,
+    VendorProfile,
+    normalize_email_address,
+)
+from .phone_utils import normalize_and_validate_nigerian_phone
 
 logger = logging.getLogger(__name__)
 
-# ── Module-level constants ──────────────────────────────────────────────────
-STORE_LOGO_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
-TRIAL_PERIOD_DAYS = 30
+STORE_DESCRIPTION_MAX_LENGTH = 500
+_FORBIDDEN_NAME_CHARS = set("<>&\"'")
+
+
+def _isoformat_or_none(value):
+    return value.isoformat() if value is not None else None
+
+
+def vendor_subscription_payload(vendor):
+    return {
+        "subscription_status": vendor.get_effective_subscription_status(),
+        "subscription_expiry": _isoformat_or_none(vendor.get_effective_subscription_expiry()),
+        "raw_subscription_status": vendor.subscription_status,
+        "raw_subscription_expiry": _isoformat_or_none(vendor.subscription_expiry),
+        "trial_start": _isoformat_or_none(vendor.trial_start),
+        "trial_end": _isoformat_or_none(vendor.trial_end),
+    }
+
+
+def store_details_payload(vendor):
+    """Store summary returned at login and after vendor signup."""
+    return {
+        "store_name": vendor.store_name,
+        "store_logo_url": media_url(vendor.store_logo),
+        "store_description": vendor.store_description,
+        "phone_number": str(vendor.phone_number) if vendor.phone_number else None,
+        "whatsapp_number": str(vendor.whatsapp_number) if vendor.whatsapp_number else None,
+        "instagram_handle": vendor.instagram_handle,
+        "tiktok_handle": vendor.tiktok_handle,
+        "is_verified": vendor.is_verified,
+        **vendor_subscription_payload(vendor),
+    }
+
+
+def _clean_handle(value):
+    return (value or "").strip().lstrip("@")[:50]
+
+
+# ── Accounts ────────────────────────────────────────────────────────────────
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
-    """Serializer for user profile details"""
-
+    profile_picture = serializers.SerializerMethodField()
     vendor_info = serializers.SerializerMethodField()
 
     class Meta:
@@ -42,450 +83,225 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "vendor_info",
         ]
 
-    def get_vendor_info(self, obj):
-        """Get vendor information if user is a vendor"""
-        if hasattr(obj, "vendor_profile"):
-            vendor = obj.vendor_profile
-            return {
-                "id": vendor.id,
-                "store_name": vendor.store_name,
-                "store_description": vendor.store_description,
-                "phone_number": (
-                    str(vendor.phone_number) if vendor.phone_number else None
-                ),
-                "whatsapp_number": (
-                    str(vendor.whatsapp_number) if vendor.whatsapp_number else None
-                ),
-                "instagram_handle": vendor.instagram_handle,
-                "tiktok_handle": vendor.tiktok_handle,
-                "is_verified": vendor.is_verified,
-                "subscription_status": vendor.get_effective_subscription_status(),
-                "subscription_start": vendor.subscription_start,
-                "subscription_expiry": vendor.get_effective_subscription_expiry(),
-                "raw_subscription_status": vendor.subscription_status,
-                "raw_subscription_expiry": vendor.subscription_expiry,
-                "trial_start": vendor.trial_start,
-                "trial_end": vendor.trial_end,
-            }
-        return None
+    def get_profile_picture(self, user):
+        return media_url(user.profile_picture)
+
+    def get_vendor_info(self, user):
+        vendor = getattr(user, "vendor_profile", None)
+        if vendor is None:
+            return None
+        return {"id": vendor.pk, **store_details_payload(vendor)}
 
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for updating user profile information (excluding profile picture)"""
+    hostel = serializers.ChoiceField(
+        choices=UserProfile.HOSTEL_CHOICES, required=False, allow_blank=True, allow_null=True
+    )
 
     class Meta:
         model = UserProfile
-        fields = [
-            "first_name",
-            "last_name",
-            "hostel",
-        ]
+        fields = ["first_name", "last_name", "hostel"]
         extra_kwargs = {
             "first_name": {"required": False},
             "last_name": {"required": False},
-            "hostel": {"required": False},
         }
 
+    def validate_first_name(self, value):
+        return value.strip()
+
+    def validate_last_name(self, value):
+        return value.strip()
+
     def validate_hostel(self, value):
-        """Validate hostel choice"""
-        if value and value not in [choice[0] for choice in UserProfile.HOSTEL_CHOICES]:
-            raise serializers.ValidationError(
-                f"Invalid hostel choice. Must be one of: {[choice[0] for choice in UserProfile.HOSTEL_CHOICES]}"
-            )
-        return value
+        return value or None
 
 
 class ProfilePictureUploadSerializer(serializers.ModelSerializer):
-    """Dedicated serializer for profile picture uploads"""
+    profile_picture = serializers.ImageField()
 
     class Meta:
         model = UserProfile
         fields = ["profile_picture"]
-        extra_kwargs = {
-            "profile_picture": {
-                "required": True,
-                "help_text": "Upload a profile picture (JPG, PNG, GIF, SVG supported)",
-            },
-        }
 
     def validate_profile_picture(self, value):
-        """Validate uploaded profile picture"""
-        if value:
-            # Check file size (limit to 5MB)
-            if value.size > 5 * 1024 * 1024:
-                raise serializers.ValidationError(
-                    "Profile picture file size cannot exceed 5MB."
-                )
-
-            # Check file type
-            valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg"]
-            import os
-
-            ext = os.path.splitext(value.name)[1].lower()
-            if ext not in valid_extensions:
-                raise serializers.ValidationError(
-                    f"Invalid file type. Supported formats: {', '.join(valid_extensions)}"
-                )
-
-            # Additional validation for SVG files
-            if ext == ".svg":
-                # Basic SVG content validation
-                try:
-                    content = value.read()
-                    value.seek(0)  # Reset file pointer
-
-                    # Check if it's a valid SVG by looking for SVG tags
-                    content_str = content.decode("utf-8", errors="ignore")
-                    if not (
-                        "<svg" in content_str.lower()
-                        and "</svg>" in content_str.lower()
-                    ):
-                        raise serializers.ValidationError(
-                            "Invalid SVG file. File must contain valid SVG content."
-                        )
-                except (IOError, UnicodeDecodeError):
-                    raise serializers.ValidationError(
-                        "Invalid SVG file. Unable to process the file."
-                    )
-
-        return value
+        return validate_image_upload(value)
 
 
 class SignupSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=6)
-    first_name = serializers.CharField(max_length=150, required=True, allow_blank=False)
-    last_name = serializers.CharField(max_length=150, required=True, allow_blank=False)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
 
     class Meta:
         model = UserProfile
         fields = ["user_name", "email", "first_name", "last_name", "password"]
 
-    def validate_first_name(self, value):
-        """Ensure first_name is not just whitespace"""
-        if not value or not value.strip():
+    def validate_email(self, value):
+        value = normalize_email_address(value)
+        if UserProfile.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError(
-                "First name is required and cannot be empty."
+                "An account with this email already exists. Try signing in instead."
             )
-        return value.strip()
+        return value
+
+    def validate_user_name(self, value):
+        value = value.strip()
+        if UserProfile.objects.filter(user_name__iexact=value).exists():
+            raise serializers.ValidationError("This username is taken. Try another one.")
+        return value
+
+    def validate_first_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("First name is required.")
+        return value
 
     def validate_last_name(self, value):
-        """Ensure last_name is not just whitespace"""
-        if not value or not value.strip():
-            raise serializers.ValidationError(
-                "Last name is required and cannot be empty."
-            )
-        return value.strip()
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Last name is required.")
+        return value
 
-    def create(self, validated_data):
-        user = UserProfile(
-            user_name=validated_data["user_name"],
-            email=validated_data.get("email", ""),
-            first_name=validated_data["first_name"],
-            last_name=validated_data["last_name"],
+    def validate(self, attrs):
+        candidate = UserProfile(
+            email=attrs.get("email", ""),
+            user_name=attrs.get("user_name", ""),
+            first_name=attrs.get("first_name", ""),
+            last_name=attrs.get("last_name", ""),
         )
-        user.set_password(validated_data["password"])
-        user.save()
-        return user
+        try:
+            validate_password(attrs["password"], user=candidate)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"password": list(exc.messages)})
+        return attrs
 
 
-class VendorRegisterSerializer(serializers.ModelSerializer):
-    # Store logo can be either a URL string or an uploaded file
-    store_logo = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        help_text="URL to a logo image (optional when sending JSON)",
+# ── Vendors ─────────────────────────────────────────────────────────────────
+
+
+class VendorRegisterSerializer(serializers.Serializer):
+    store_name = serializers.CharField(max_length=150)
+    store_description = serializers.CharField(
+        required=False, allow_blank=True, max_length=STORE_DESCRIPTION_MAX_LENGTH
     )
-
-    def to_internal_value(self, data):
-        # If store_logo is a file upload, remove it from data so CharField doesn't validate it
-        # We'll handle the file in create() method
-        request = self.context.get("request")
-        if request and hasattr(request, "FILES") and "store_logo" in request.FILES:
-            # Make a copy of data and remove store_logo to avoid CharField validation
-            data = data.copy() if hasattr(data, "copy") else dict(data)
-            data.pop("store_logo", None)
-
-        return super().to_internal_value(data)
-
-    store_name = serializers.CharField(
-        max_length=255, help_text="The name of your store (required)"
-    )
-    account_number = serializers.CharField(
-        max_length=20,
-        help_text="Your bank account number for payment processing (required)",
-    )
-    bank_code = serializers.CharField(
-        max_length=10,
-        help_text="Your bank code (e.g., 044 for Access Bank, 058 for GTBank) (required)",
-    )
-    phone_number = serializers.CharField(
-        required=False, allow_blank=True, help_text="Your phone number (optional)"
-    )
-    whatsapp_number = serializers.CharField(
-        required=False, allow_blank=True, help_text="Your WhatsApp number (optional)"
-    )
-
-    class Meta:
-        model = VendorProfile
-        fields = [
-            "store_logo",
-            "store_name",
-            "account_number",
-            "bank_code",
-            "phone_number",
-            "whatsapp_number",
-        ]
-
-    def validate_account_number(self, value):
-        """
-        Validate account number format
-        """
-        # Remove any spaces or dashes
-        account_number = value.replace(" ", "").replace("-", "")
-
-        # Check if it's all digits
-        if not account_number.isdigit():
-            raise serializers.ValidationError("Account number must contain only digits")
-
-        # Check length (most Nigerian banks use 10 digits)
-        if len(account_number) != 10:
-            raise serializers.ValidationError(
-                "Account number must be exactly 10 digits"
-            )
-
-        return account_number
-
-    def validate_bank_code(self, value):
-        from .bank_codes import VALID_BANK_CODES, get_bank_name
-        code = value.strip()
-        if code not in VALID_BANK_CODES:
-            raise serializers.ValidationError(
-                f"'{code}' is not a recognised Nigerian bank code. "
-                "Please check your bank code and try again."
-            )
-        return code
+    account_number = serializers.CharField(max_length=20)
+    bank_code = serializers.CharField(max_length=10)
+    phone_number = serializers.CharField(required=False, allow_blank=True)
+    whatsapp_number = serializers.CharField(required=False, allow_blank=True)
+    store_logo = serializers.ImageField(required=False)
 
     def validate_store_name(self, value):
-        """
-        Validate store name
-        """
-        # Remove extra whitespace
-        store_name = value.strip()
+        value = value.strip()
+        if len(value) < 3:
+            raise serializers.ValidationError("Store name must be at least 3 characters.")
+        if _FORBIDDEN_NAME_CHARS & set(value):
+            raise serializers.ValidationError("Store name can't contain < > & or quotes.")
+        return value
 
-        # Check minimum length
-        if len(store_name) < 3:
-            raise serializers.ValidationError(
-                "Store name must be at least 3 characters long"
-            )
+    def validate_account_number(self, value):
+        value = value.replace(" ", "").replace("-", "")
+        if not value.isdigit() or len(value) != 10:
+            raise serializers.ValidationError("Account number must be exactly 10 digits.")
+        return value
 
-        # Check for inappropriate characters (basic check)
-        if any(char in store_name for char in ["<", ">", "&", '"', "'"]):
-            raise serializers.ValidationError("Store name contains invalid characters")
+    def validate_bank_code(self, value):
+        value = value.strip()
+        if value not in VALID_BANK_CODES:
+            raise serializers.ValidationError("Choose your bank from the list.")
+        return value
 
-        return store_name
+    def _validate_unique_phone(self, value, field, label):
+        if not value or not str(value).strip():
+            return None
+        phone = normalize_and_validate_nigerian_phone(value, label)
+        # Half-created stores from failed sign-up attempts (no payout account)
+        # must not block a legitimate retry.
+        taken = VendorProfile.objects.filter(**{field: phone}).exclude(
+            subaccount_code__isnull=True
+        ).exclude(subaccount_code="")
+        if taken.exists():
+            raise serializers.ValidationError(f"This {label} is already used by another store.")
+        return phone
 
     def validate_phone_number(self, value):
-        if not value or not str(value).strip():
-            return None
-        phone_str = normalize_and_validate_nigerian_phone(value, "phone number")
-        # Exclude incomplete vendor profiles (no subaccount) so orphaned rows
-        # from a previous failed registration don't block legitimate retries.
-        if VendorProfile.objects.filter(phone_number=phone_str).exclude(
-            subaccount_code__isnull=True
-        ).exclude(subaccount_code="").exists():
-            raise serializers.ValidationError(
-                "This phone number is already registered with another vendor."
-            )
-        return phone_str
+        return self._validate_unique_phone(value, "phone_number", "phone number")
 
     def validate_whatsapp_number(self, value):
-        if not value or not str(value).strip():
-            return None
-        phone_str = normalize_and_validate_nigerian_phone(value, "WhatsApp number")
-        if VendorProfile.objects.filter(whatsapp_number=phone_str).exclude(
-            subaccount_code__isnull=True
-        ).exclude(subaccount_code="").exists():
-            raise serializers.ValidationError(
-                "This WhatsApp number is already registered with another vendor."
-            )
-        return phone_str
+        return self._validate_unique_phone(value, "whatsapp_number", "WhatsApp number")
 
-    def validate(self, data):
-        """
-        Validate that the user isn't already a vendor and other business rules
-        """
-        request = self.context["request"]
-
-        # Check if user is already a vendor
-        if hasattr(request.user, "vendor_profile"):
-            raise serializers.ValidationError("User is already registered as a vendor")
-
-        return data
+    def validate_store_logo(self, value):
+        return validate_image_upload(value)
 
     def create(self, validated_data):
-        from django.db import transaction as db_transaction
-        request = self.context["request"]
+        user = self.context["request"].user
         account_number = validated_data.pop("account_number")
         bank_code = validated_data.pop("bank_code")
-        store_logo_url = validated_data.pop("store_logo", None)
+        store_logo = validated_data.pop("store_logo", None)
+        store_name = validated_data["store_name"]
 
-        file_logo = None
-        if hasattr(request, "FILES") and request.FILES.get("store_logo"):
-            file_logo = request.FILES.get("store_logo")
+        plan = (
+            VendorPlan.objects.filter(name=VendorPlan.BASIC, is_active=True).first()
+            or VendorPlan.objects.filter(is_active=True).order_by("price").first()
+        )
+        now = timezone.now()
+        trial_days = get_settings().trial_days
 
-        phone_number = validated_data.pop("phone_number", None)
-        whatsapp_number = validated_data.pop("whatsapp_number", None)
-
-        if phone_number == "" or (phone_number and not phone_number.strip()):
-            phone_number = None
-        if whatsapp_number == "" or (whatsapp_number and not whatsapp_number.strip()):
-            whatsapp_number = None
-
-        # Validate logo file BEFORE touching the database so failures here
-        # never leave an orphaned VendorProfile behind.
-        valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg"]
-        if file_logo:
-            if hasattr(file_logo, "size") and file_logo.size > STORE_LOGO_MAX_SIZE:
-                raise serializers.ValidationError(
-                    {"store_logo": ["File size cannot exceed 5MB."]}
-                )
-
-            name = getattr(file_logo, "name", "store_logo")
-            ext = os.path.splitext(name)[1].lower()
-            if ext == "" and hasattr(file_logo, "content_type"):
-                if file_logo.content_type == "image/svg+xml":
-                    ext = ".svg"
-
-            if ext not in valid_extensions:
-                raise serializers.ValidationError(
-                    {
-                        "store_logo": [
-                            f"Unsupported file type '{ext}'. Supported: {', '.join(valid_extensions)}"
-                        ]
-                    }
-                )
-
-        try:
-            default_plan = VendorPlan.objects.get(name=VendorPlan.BASIC, is_active=True)
-        except VendorPlan.DoesNotExist:
-            default_plan = VendorPlan.objects.filter(is_active=True).first()
-
-        vendor_data = {
-            "user": request.user,
-            "plan": default_plan,
-            "subscription_status": "trial",
-            "trial_start": timezone.now(),
-            "trial_end": timezone.now() + timedelta(days=TRIAL_PERIOD_DAYS),
-            "is_verified": True,
-            **validated_data,
-        }
-
-        if not validated_data.get("store_description"):
-            vendor_data["store_description"] = (
-                f"Welcome to {validated_data.get('store_name', 'our store')}! We offer quality products and excellent service."
+        with transaction.atomic():
+            vendor = VendorProfile.objects.create(
+                user=user,
+                plan=plan,
+                store_name=store_name,
+                store_description=validated_data.get("store_description")
+                or f"Welcome to {store_name}!",
+                phone_number=validated_data.get("phone_number"),
+                whatsapp_number=validated_data.get("whatsapp_number"),
+                subscription_status="trial",
+                trial_start=now,
+                trial_end=now + timedelta(days=trial_days),
+                is_verified=True,
             )
-
-        if phone_number:
-            vendor_data["phone_number"] = phone_number
-        if whatsapp_number:
-            vendor_data["whatsapp_number"] = whatsapp_number
-
-        # All DB writes in one atomic block. Any failure here rolls back
-        # everything cleanly — no orphaned rows.
-        with db_transaction.atomic():
-            vendor = VendorProfile.objects.create(**vendor_data)
-
-            from .models import SubscriptionHistory
+            if store_logo:
+                vendor.store_logo = store_logo
+                vendor.save(update_fields=["store_logo"])
+            user.is_vendor = True
+            user.save(update_fields=["is_vendor"])
             SubscriptionHistory.log_event(
                 vendor=vendor,
                 event_type="trial_started",
-                new_plan=default_plan,
-                notes="14-day trial period started on vendor registration",
+                new_plan=plan,
+                new_status="trial",
+                notes=f"{trial_days}-day free trial started",
             )
 
-            if file_logo:
-                vendor.store_logo = file_logo
-                vendor.save()
-            elif store_logo_url:
-                try:
-                    resp = requests.get(store_logo_url, timeout=6)
-                    if resp.status_code == 200:
-                        parsed = urlparse(store_logo_url)
-                        filename = (
-                            os.path.basename(parsed.path)
-                            or f"store_logo_{vendor.pk}.png"
-                        )
-                        if not os.path.splitext(filename)[1]:
-                            filename = f"{filename}.png"
-                        vendor.store_logo.save(
-                            filename, ContentFile(resp.content), save=False
-                        )
-                        vendor.save()
-                    else:
-                        logger.warning(
-                            f"[userprofile] Failed to fetch store_logo from {store_logo_url}: HTTP {resp.status_code}"
-                        )
-                except requests.RequestException as logo_exc:
-                    logger.warning(
-                        f"[userprofile] Error fetching store_logo from {store_logo_url}: {logo_exc}"
-                    )
-
-            request.user.is_vendor = True
-            request.user.save()
-
-        # Paystack is an external API call — keep it outside the atomic block
-        # so we don't hold a DB connection open during the HTTP round-trip.
+        # External call outside the transaction so a slow Paystack doesn't
+        # hold the database. On failure the half-created store is removed.
         try:
             create_paystack_subaccount(vendor, account_number, bank_code)
-            logger.info(f"Paystack subaccount created for vendor {vendor.pk} ({vendor.store_name})")
-        except (requests.RequestException, PaystackError) as paystack_error:
-            error_msg = str(paystack_error)
-            logger.error(
-                f"Paystack subaccount creation failed for {vendor.store_name}: {error_msg}"
-            )
-            # The atomic block already committed, so clean up manually.
-            # Wrap cleanup in its own try/except — a cleanup failure must not
-            # mask the original Paystack error or leave the user stuck.
-            try:
+        except PaystackError as exc:
+            logger.warning("Paystack subaccount failed for user %s: %s", user.pk, exc.message)
+            with transaction.atomic():
                 vendor.delete()
-                request.user.is_vendor = False
-                request.user.save()
-            except Exception as cleanup_error:
-                logger.error(
-                    f"Cleanup after Paystack failure also failed for vendor {vendor.pk}: {cleanup_error}. "
-                    "The VendorProfile row may be orphaned and require manual review."
-                )
+                user.is_vendor = False
+                user.save(update_fields=["is_vendor"])
             raise serializers.ValidationError(
-                f"Payment system setup failed: {error_msg}. "
-                f"Please verify your bank details (account number and bank code) and try again."
+                {
+                    "account_number": [
+                        "We couldn't set up payouts to this account. "
+                        "Check the account number and bank, then try again."
+                    ]
+                }
             )
-
         return vendor
 
 
-class VendorProfileSerializer(serializers.ModelSerializer):
-    products = serializers.SerializerMethodField()
-
-    class Meta:
-        model = VendorProfile
-        fields = ["id", "store_name", "products"]
-
-    def get_products(self, obj):
-        products = Product.objects.filter(
-            vendor=obj,
-            status=Product.ACTIVE,
-            stock=Product.IN_STOCK,
-            vendor__subscription_status__in=["active", "grace", "trial"],
-        )
-        return ProductSerializer(products, many=True).data
-
-
 class VendorUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for updating vendor store details"""
-
-    # Override phone fields to handle custom validation
     phone_number = serializers.CharField(required=False, allow_blank=True)
     whatsapp_number = serializers.CharField(required=False, allow_blank=True)
+    store_logo = serializers.ImageField(required=False)
+    store_description = serializers.CharField(
+        required=False, allow_blank=True, max_length=STORE_DESCRIPTION_MAX_LENGTH
+    )
 
     class Meta:
         model = VendorProfile
@@ -500,155 +316,44 @@ class VendorUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def validate_store_name(self, value):
-        """Ensure store name is not empty"""
-        if not value or not value.strip():
-            raise serializers.ValidationError("Store name cannot be empty.")
-        return value.strip()
-
-    def validate_store_description(self, value):
-        """Optional validation for store description"""
-        if value and len(value) > 500:
-            raise serializers.ValidationError(
-                "Store description cannot exceed 500 characters."
-            )
+        value = value.strip()
+        if len(value) < 3:
+            raise serializers.ValidationError("Store name must be at least 3 characters.")
+        if _FORBIDDEN_NAME_CHARS & set(value):
+            raise serializers.ValidationError("Store name can't contain < > & or quotes.")
         return value
 
-    def validate_phone_number(self, value):
+    def validate_store_logo(self, value):
+        return validate_image_upload(value)
+
+    def validate_instagram_handle(self, value):
+        return _clean_handle(value)
+
+    def validate_tiktok_handle(self, value):
+        return _clean_handle(value)
+
+    def _validate_unique_phone(self, value, field, label):
         if not value or not str(value).strip():
-            return ""
-        phone_str = normalize_and_validate_nigerian_phone(value, "phone number")
-        existing = VendorProfile.objects.filter(phone_number=phone_str)
-        if self.instance and self.instance.pk:
-            existing = existing.exclude(pk=self.instance.pk)
-        if existing.exists():
-            raise serializers.ValidationError(
-                "A vendor with this phone number already exists."
-            )
-        return phone_str
+            return None
+        phone = normalize_and_validate_nigerian_phone(value, label)
+        clash = VendorProfile.objects.filter(**{field: phone}).exclude(pk=self.instance.pk)
+        if clash.exists():
+            raise serializers.ValidationError(f"This {label} is already used by another store.")
+        return phone
+
+    def validate_phone_number(self, value):
+        return self._validate_unique_phone(value, "phone_number", "phone number")
 
     def validate_whatsapp_number(self, value):
-        if not value or not str(value).strip():
-            return ""
-        phone_str = normalize_and_validate_nigerian_phone(value, "WhatsApp number")
-        existing = VendorProfile.objects.filter(whatsapp_number=phone_str)
-        if self.instance and self.instance.pk:
-            existing = existing.exclude(pk=self.instance.pk)
-        if existing.exists():
-            raise serializers.ValidationError(
-                "A vendor with this WhatsApp number already exists."
-            )
-        return phone_str
-
-    def save(self, **kwargs):
-        """Convert phone numbers to PhoneNumber objects before saving"""
-        # Convert validated phone numbers back to PhoneNumber objects
-        validated_data: Any = self.validated_data
-        if validated_data is None:
-            validated_data = {}
-
-        if validated_data.get("phone_number"):
-            from phonenumber_field.phonenumber import PhoneNumber
-
-            validated_data["phone_number"] = PhoneNumber.from_string(
-                validated_data["phone_number"], region="NG"
-            )
-
-        if validated_data.get("whatsapp_number"):
-            from phonenumber_field.phonenumber import PhoneNumber
-
-            validated_data["whatsapp_number"] = PhoneNumber.from_string(
-                validated_data["whatsapp_number"], region="NG"
-            )
-
-        return super().save(**kwargs)
-
-
-class ProductCreateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Product
-        exclude = ["vendor", "slug", "created_at", "updated_at"]
-
-    def create(self, validated_data):
-        # The slug will be auto-generated in the model's save method with uniqueness
-        return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        # Update the product - slug will be regenerated if title changes
-        if "title" in validated_data:
-            # Clear the slug so it gets regenerated in the model's save method
-            instance.slug = ""
-        return super().update(instance, validated_data)
-
-
-class OrderItemSerializer(serializers.ModelSerializer):
-    product_title = serializers.CharField(source="product.title", read_only=True)
-    order_id = serializers.IntegerField(source="order.id", read_only=True)
-    quantity = serializers.IntegerField(read_only=True)
-    price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
-
-    class Meta:
-        model = OrderItem
-        fields = ["id", "product_title", "order_id", "quantity", "price"]
-
-
-class OrderDetailSerializer(serializers.ModelSerializer):
-    items = OrderItemSerializer(source="orderitem_set", many=True, read_only=True)
-
-    class Meta:
-        model = Order
-        fields = ["id", "created_at", "total_cost", "items"]
-
-
-class VendorOrderDetailSerializer(serializers.Serializer):
-    order = serializers.SerializerMethodField()
-    items = OrderItemSerializer(many=True)
-
-    def get_order(self, obj):
-        order = obj["order"]
-        return {
-            "order_id": order.id,
-            "ref": order.ref,
-            "first_name": order.first_name,
-            "last_name": order.last_name,
-            "phone": str(order.phone),
-            "pickup_location": order.pickup_location,
-            "is_paid": order.is_paid,
-            "created_at": order.created_at,
-        }
-
-
-class VendorOrderItemSerializer(serializers.ModelSerializer):
-    product_title = serializers.CharField(source="product.title", read_only=True)
-    order_ref = serializers.CharField(source="order.ref", read_only=True)
-    customer_name = serializers.SerializerMethodField()
-    pickup_location = serializers.CharField(
-        source="order.pickup_location", read_only=True
-    )
-    phone = serializers.CharField(source="order.phone", read_only=True)
-
-    class Meta:
-        model = OrderItem
-        fields = [
-            "id",
-            "product_title",
-            "quantity",
-            "price",
-            "fulfilled",
-            "order_ref",
-            "customer_name",
-            "pickup_location",
-            "phone",
-        ]
-
-    def get_customer_name(self, obj):
-        return f"{obj.order.first_name} {obj.order.last_name}"
+        return self._validate_unique_phone(value, "whatsapp_number", "WhatsApp number")
 
 
 class VendorListSerializer(serializers.ModelSerializer):
-    """Serializer for listing vendors with essential information"""
+    """Public vendor card. Expects ``listed_product_count``/``avg_rating`` annotations."""
 
-    user_name = serializers.CharField(source="user.user_name", read_only=True)
-    plan_name = serializers.CharField(source="plan.name", read_only=True)
+    store_logo = serializers.SerializerMethodField()
+    phone_number = serializers.SerializerMethodField()
+    whatsapp_number = serializers.SerializerMethodField()
     product_count = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()
 
@@ -656,7 +361,6 @@ class VendorListSerializer(serializers.ModelSerializer):
         model = VendorProfile
         fields = [
             "id",
-            "user_name",
             "store_name",
             "store_logo",
             "store_description",
@@ -665,127 +369,55 @@ class VendorListSerializer(serializers.ModelSerializer):
             "instagram_handle",
             "tiktok_handle",
             "is_verified",
-            "plan_name",
-            "subscription_status",
-            "subscription_start",
-            "subscription_expiry",
             "product_count",
             "average_rating",
         ]
 
-    def get_product_count(self, obj):
-        """Get count of active products for this vendor"""
-        return Product.objects.filter(
-            vendor=obj, status=Product.ACTIVE, stock=Product.IN_STOCK
-        ).count()
+    def get_store_logo(self, vendor):
+        return media_url(vendor.store_logo)
 
-    def get_average_rating(self, obj):
-        """Calculate average rating across all vendor's products"""
-        from django.db.models import Avg
-        from store.models import Review
+    def get_phone_number(self, vendor):
+        return str(vendor.phone_number) if vendor.phone_number else None
 
-        # Get all reviews for all products belonging to this vendor
-        vendor_reviews = Review.objects.filter(
-            product__vendor=obj, approved_review=True
-        ).aggregate(avg_rating=Avg("rating"))
+    def get_whatsapp_number(self, vendor):
+        return str(vendor.whatsapp_number) if vendor.whatsapp_number else None
 
-        avg_rating = vendor_reviews["avg_rating"]
-        return round(avg_rating, 1) if avg_rating is not None else 0.0
+    def get_product_count(self, vendor):
+        return getattr(vendor, "listed_product_count", 0) or 0
+
+    def get_average_rating(self, vendor):
+        average = getattr(vendor, "avg_rating", None)
+        return round(average, 1) if average is not None else 0
 
 
 class VendorPlanSerializer(serializers.ModelSerializer):
+    display_name = serializers.SerializerMethodField()
+    features = serializers.SerializerMethodField()
+
     class Meta:
         model = VendorPlan
-        fields = [
-            "id",
-            "name",
-            "price",
-            "max_products",
-            "paystack_plan_code",
-            "is_active",
-        ]
-        read_only_fields = ["id", "paystack_plan_code"]
+        fields = ["id", "name", "display_name", "description", "price", "max_products", "features", "is_active"]
+
+    def get_display_name(self, plan):
+        return str(plan).title()
+
+    def get_features(self, plan):
+        return [line.strip() for line in (plan.features or "").splitlines() if line.strip()]
 
 
 class SubscriptionInitiateSerializer(serializers.Serializer):
-    plan_id = serializers.IntegerField(
-        help_text="ID of the vendor plan to subscribe to"
-    )
+    plan_id = serializers.IntegerField()
 
     def validate_plan_id(self, value):
-        try:
-            plan = VendorPlan.objects.get(id=value, is_active=True)
-            return value
-        except VendorPlan.DoesNotExist:
-            raise serializers.ValidationError("Invalid or inactive plan selected.")
-
-
-class SubscriptionResponseSerializer(serializers.Serializer):
-    authorization_url = serializers.URLField(help_text="Paystack payment URL")
-    access_code = serializers.CharField(help_text="Paystack access code")
-    reference = serializers.CharField(help_text="Payment reference")
-    message = serializers.CharField(help_text="Success message")
-
-
-class ChangePlanSerializer(serializers.Serializer):
-    plan_id = serializers.IntegerField(help_text="ID of the new plan to switch to")
-    immediate = serializers.BooleanField(
-        default=False,
-        help_text="Whether to apply change immediately (true) or at next billing cycle (false)",
-    )
-
-    def validate_plan_id(self, value):
-        try:
-            plan = VendorPlan.objects.get(id=value, is_active=True)
-            return value
-        except VendorPlan.DoesNotExist:
-            raise serializers.ValidationError("Invalid or inactive plan selected.")
-
-    def validate(self, attrs):
-        """Additional validation for plan change"""
-        plan_id = attrs.get("plan_id")
-
-        # Get the vendor from context (should be passed from view)
-        vendor = self.context.get("vendor")
-        if not vendor:
-            raise serializers.ValidationError("Vendor context is required.")
-
-        # Check if trying to change to the same plan
-        current_plan = vendor.plan
-        if current_plan and current_plan.id == plan_id:
-            raise serializers.ValidationError("You are already on this plan.")
-
-        # Check subscription status
-        if vendor.subscription_status in ["cancelled", "expired"]:
-            raise serializers.ValidationError(
-                f"Cannot change plan when subscription is {vendor.subscription_status}. Please resubscribe first."
-            )
-
-        # Get the new plan to check pricing
-        try:
-            new_plan = VendorPlan.objects.get(id=plan_id, is_active=True)
-        except VendorPlan.DoesNotExist:
-            raise serializers.ValidationError("Invalid or inactive plan selected.")
-
-        # Inform about trial upgrade payment requirement (allow but inform)
-        if vendor.subscription_status == "trial" and new_plan.price > 0:
-            # This is informational - we allow the upgrade but user should know payment is required
-            pass  # The API response will include payment URL
-
-        return attrs
+        if not VendorPlan.objects.filter(pk=value, is_active=True).exists():
+            raise serializers.ValidationError("That plan isn't available.")
+        return value
 
 
 class SubscriptionHistorySerializer(serializers.ModelSerializer):
-    """Serializer for subscription history events"""
-
-    vendor_name = serializers.CharField(source="vendor.store_name", read_only=True)
-    previous_plan_name = serializers.CharField(
-        source="previous_plan.name", read_only=True
-    )
-    new_plan_name = serializers.CharField(source="new_plan.name", read_only=True)
-    event_display = serializers.CharField(
-        source="get_event_type_display", read_only=True
-    )
+    previous_plan_name = serializers.CharField(source="previous_plan.name", read_only=True, default=None)
+    new_plan_name = serializers.CharField(source="new_plan.name", read_only=True, default=None)
+    event_display = serializers.CharField(source="get_event_type_display", read_only=True)
 
     class Meta:
         model = SubscriptionHistory
@@ -793,7 +425,6 @@ class SubscriptionHistorySerializer(serializers.ModelSerializer):
             "id",
             "event_type",
             "event_display",
-            "vendor_name",
             "previous_plan_name",
             "new_plan_name",
             "previous_status",

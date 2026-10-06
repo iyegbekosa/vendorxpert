@@ -4,7 +4,7 @@ Hi there,
 
 Your verification code is: {{ code }}
 
-This code will expire at {{ expires_at }} UTC.
+This code will expire at {{ expires_at }} (Lagos time).
 
 Please enter this code on the VendorXprt website to complete your registration.
 

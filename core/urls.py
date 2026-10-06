@@ -1,6 +1,9 @@
 from django.urls import path
-from . import views, api_views
+
+from . import api_views
+
 urlpatterns = [
-    path('', views.frontpage, name='frontpage'),
-    path('frontpage/', api_views.frontpage_api, name='frontpage_api'),
+    path("", api_views.root, name="root"),
+    path("api/health/", api_views.health_api, name="health_api"),
+    path("frontpage/", api_views.frontpage_api, name="frontpage_api"),
 ]

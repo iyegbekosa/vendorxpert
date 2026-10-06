@@ -14,6 +14,8 @@ ITEMS PURCHASED:
   Quantity: {{ item.quantity }} × ₦{{ item.unit_price|floatformat:2 }} = ₦{{ item.total_price|floatformat:2 }}
 {% endfor %}
 
+Items: ₦{{ subtotal|floatformat:2 }}
+Payment processing fee: ₦{{ service_fee|floatformat:2 }}
 TOTAL PAID: ₦{{ total_amount|floatformat:2 }}
 
 PICKUP INFORMATION:

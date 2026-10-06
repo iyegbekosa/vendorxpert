@@ -6,12 +6,28 @@ Updated to use ZeptoMail HTTP API instead of SMTP
 from django.conf import settings
 from django.template.loader import render_to_string
 import logging
-import random
 from django.utils import timezone
 from datetime import timedelta
 from .zeptomail_client import send_zeptomail
 
 logger = logging.getLogger(__name__)
+
+
+def _format_local(moment):
+    return timezone.localtime(moment).strftime("%B %d, %Y at %I:%M %p")
+
+
+def _item_line(item):
+    """Email line for an OrderItem. ``item.price`` is the line total in naira."""
+    quantity = item.quantity or 1
+    return {
+        "product_name": item.product.title,
+        "vendor_name": item.product.vendor.store_name,
+        "quantity": quantity,
+        "unit_price": item.price / quantity,
+        "total_price": item.price,
+        "product_image": item.product.get_thumbnail(),
+    }
 
 
 def send_welcome_email(user):
@@ -70,7 +86,7 @@ def send_verification_email(email, code, expires_at=None):
             "code": code,
             "email": email,
             "site_name": "VendorXprt",
-            "expires_at": expires_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "expires_at": timezone.localtime(expires_at).strftime("%I:%M %p"),
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
@@ -106,7 +122,7 @@ def send_password_reset_email(email, code, expires_at=None):
             "code": code,
             "email": email,
             "site_name": "VendorXprt",
-            "expires_at": expires_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "expires_at": timezone.localtime(expires_at).strftime("%I:%M %p"),
             "support_email": settings.DEFAULT_FROM_EMAIL,
         }
 
@@ -206,26 +222,12 @@ def send_receipt_email(order):
             "product", "product__vendor"
         )
 
-        total_amount = order.total_cost or 0
         items_data = []
         vendors_involved = set()
 
         for item in order_items:
             vendors_involved.add(item.product.vendor.store_name)
-            items_data.append(
-                {
-                    "product_name": item.product.title,
-                    "vendor_name": item.product.vendor.store_name,
-                    "quantity": item.quantity,
-                    "unit_price": item.price / 100,  # Convert from kobo to naira
-                    "total_price": (item.price * item.quantity) / 100,
-                    "product_image": (
-                        item.product.get_thumbnail()
-                        if hasattr(item.product, "get_thumbnail")
-                        else None
-                    ),
-                }
-            )
+            items_data.append(_item_line(item))
 
         # Create context for email template
         context = {
@@ -234,13 +236,13 @@ def send_receipt_email(order):
             or user.user_name,
             "email": user.email,
             "order_ref": order.ref,
-            "order_date": order.created_at.strftime("%B %d, %Y at %I:%M %p"),
-            "pickup_location": dict(order.PICKUP_CHOICES).get(
-                order.pickup_location, order.pickup_location
-            ),
-            "total_amount": total_amount / 100,  # Convert from kobo to naira
+            "order_date": _format_local(order.paid_at or order.created_at),
+            "pickup_location": order.get_pickup_location_display(),
+            "subtotal": order.total_cost or 0,
+            "service_fee": order.service_fee,
+            "total_amount": order.amount_due,
             "items": items_data,
-            "vendors_list": list(vendors_involved),
+            "vendors_list": sorted(vendors_involved),
             "customer_phone": order.phone,
             "customer_name": f"{order.first_name} {order.last_name}",
             "site_name": "VendorXprt",
@@ -304,35 +306,19 @@ def send_vendor_order_notification(order):
                     logger.error(f"No email found for vendor {vendor.store_name}")
                     continue
 
-                # Calculate vendor's total earnings from this order
-                vendor_total = (
-                    sum(item.price * item.quantity for item in items) / 100
-                )  # Convert from kobo to naira
-
-                # Prepare vendor items data
-                vendor_items_data = []
-                for item in items:
-                    vendor_items_data.append(
-                        {
-                            "product_name": item.product.title,
-                            "quantity": item.quantity,
-                            "unit_price": item.price
-                            / 100,  # Convert from kobo to naira
-                            "total_price": (item.price * item.quantity) / 100,
-                        }
-                    )
+                # OrderItem.price is the line total in naira.
+                vendor_total = sum(item.price for item in items)
+                vendor_items_data = [_item_line(item) for item in items]
 
                 # Create context for email template
                 context = {
                     "vendor_name": vendor.user.first_name or vendor.user.user_name,
                     "store_name": vendor.store_name,
                     "order_ref": order.ref,
-                    "order_date": order.created_at.strftime("%B %d, %Y at %I:%M %p"),
+                    "order_date": _format_local(order.paid_at or order.created_at),
                     "customer_name": f"{order.first_name} {order.last_name}",
                     "customer_phone": order.phone,
-                    "pickup_location": dict(order.PICKUP_CHOICES).get(
-                        order.pickup_location, order.pickup_location
-                    ),
+                    "pickup_location": order.get_pickup_location_display(),
                     "vendor_items": vendor_items_data,
                     "vendor_total": vendor_total,
                     "support_email": settings.DEFAULT_FROM_EMAIL,
