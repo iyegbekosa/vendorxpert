@@ -8,6 +8,7 @@ from django.utils.text import slugify
 from phonenumber_field.modelfields import PhoneNumberField
 
 from userprofile.models import UserProfile, VendorProfile, selling_access_q
+from vendorxpert.uploads import media_url
 
 
 class Category(models.Model):
@@ -112,9 +113,9 @@ class Product(models.Model):
     def get_thumbnail(self):
         """Get thumbnail URL from Cloudinary or product image"""
         if self.thumbnail:
-            return self.thumbnail.url
+            return media_url(self.thumbnail)
         elif self.product_image:
-            return self.product_image.url
+            return media_url(self.product_image)
         else:
             return "https://placehold.co/600x400"
 

@@ -28,6 +28,7 @@ from .serializers import (
     vendor_subscription_payload,
 )
 from .services import get_vendor_kpis
+from vendorxpert.uploads import media_url
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,7 @@ def _my_store_payload(vendor):
         "vendor_id": vendor.pk,
         "vendor_name": f"{user.first_name} {user.last_name}".strip() or user.user_name,
         **store_details_payload(vendor),
-        "store_logo": vendor.store_logo.url if vendor.store_logo else None,
+        "store_logo": media_url(vendor.store_logo),
         "average_rating": round(stats["average"] or 0, 1),
         "total_reviews": stats["total"],
         "product_count": Product.objects.filter(vendor=vendor).exclude(status=Product.DELETED).count(),

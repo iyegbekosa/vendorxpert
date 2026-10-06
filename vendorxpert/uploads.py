@@ -41,3 +41,21 @@ def validate_image_upload(upload, max_bytes=DEFAULT_MAX_IMAGE_BYTES):
     if image_format not in ALLOWED_IMAGE_FORMATS:
         raise serializers.ValidationError("Upload a JPG, PNG, WEBP or GIF image.")
     return upload
+
+
+def media_url(field):
+    """Public URL for a Cloudinary image field, or None when empty.
+
+    Values stored as absolute URLs (e.g. seeded demo data or images hosted
+    elsewhere) are returned unchanged instead of being treated as Cloudinary
+    public IDs.
+    """
+    if not field:
+        return None
+    public_id = str(getattr(field, "public_id", None) or field)
+    if public_id.startswith(("http://", "https://")):
+        # CloudinaryField splits the stored string at the first "." into
+        # public_id and format; rejoin them to recover the original URL.
+        image_format = getattr(field, "format", None)
+        return f"{public_id}.{image_format}" if image_format else public_id
+    return field.url

@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from store.utils import PaystackError, create_paystack_subaccount
-from vendorxpert.uploads import validate_image_upload
+from vendorxpert.uploads import media_url, validate_image_upload
 
 from .bank_codes import VALID_BANK_CODES
 from .models import (
@@ -46,7 +46,7 @@ def store_details_payload(vendor):
     """Store summary returned at login and after vendor signup."""
     return {
         "store_name": vendor.store_name,
-        "store_logo_url": vendor.store_logo.url if vendor.store_logo else None,
+        "store_logo_url": media_url(vendor.store_logo),
         "store_description": vendor.store_description,
         "phone_number": str(vendor.phone_number) if vendor.phone_number else None,
         "whatsapp_number": str(vendor.whatsapp_number) if vendor.whatsapp_number else None,
@@ -84,7 +84,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         ]
 
     def get_profile_picture(self, user):
-        return user.profile_picture.url if user.profile_picture else None
+        return media_url(user.profile_picture)
 
     def get_vendor_info(self, user):
         vendor = getattr(user, "vendor_profile", None)
@@ -373,7 +373,7 @@ class VendorListSerializer(serializers.ModelSerializer):
         ]
 
     def get_store_logo(self, vendor):
-        return vendor.store_logo.url if vendor.store_logo else None
+        return media_url(vendor.store_logo)
 
     def get_phone_number(self, vendor):
         return str(vendor.phone_number) if vendor.phone_number else None

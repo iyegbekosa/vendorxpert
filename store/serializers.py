@@ -4,7 +4,7 @@ from django.db.models import Avg, Count, Q
 from rest_framework import serializers
 
 from userprofile.phone_utils import normalize_and_validate_nigerian_phone
-from vendorxpert.uploads import validate_image_upload
+from vendorxpert.uploads import media_url, validate_image_upload
 
 from .models import Category, Order, Product, Review
 
@@ -39,7 +39,7 @@ class ProductVendorSerializer(serializers.Serializer):
     is_verified = serializers.BooleanField()
 
     def get_store_logo(self, vendor):
-        return vendor.store_logo.url if vendor.store_logo else None
+        return media_url(vendor.store_logo)
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -84,7 +84,7 @@ class ProductSerializer(serializers.ModelSerializer):
         return obj.get_thumbnail()
 
     def get_image(self, obj):
-        return obj.product_image.url if obj.product_image else obj.get_thumbnail()
+        return media_url(obj.product_image) or obj.get_thumbnail()
 
     def get_average_rating(self, obj):
         avg = getattr(obj, "avg_rating", None)
