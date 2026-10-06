@@ -64,7 +64,7 @@ class Product(models.Model):
     )
     title = models.CharField(max_length=50)
     slug = models.SlugField()
-    description = models.TextField()
+    description = models.TextField(blank=True)
     price = models.BigIntegerField(
         validators=[MinValueValidator(1, message="Enter a valid price greater than 0.")]
     )

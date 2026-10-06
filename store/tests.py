@@ -407,7 +407,7 @@ class VendorOrderTests(APITestCase):
 
 class ProductWriteTests(APITestCase):
     def setUp(self):
-        self.vendor = make_vendor(plan=make_plan(max_products=1))
+        self.vendor = make_vendor(plan=make_plan(max_products=2))
         self.client.force_authenticate(self.vendor.user)
 
     def test_vendor_cannot_self_feature_or_change_status(self):
@@ -421,7 +421,32 @@ class ProductWriteTests(APITestCase):
         product.refresh_from_db()
         self.assertEqual((product.featured, product.price), (False, 2500))
 
+    @patch("store.models.Product.full_clean")
+    def test_description_is_optional(self, _full_clean):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from io import BytesIO
+        from PIL import Image
+
+        buffer = BytesIO()
+        Image.new("RGB", (10, 10), "orange").save(buffer, format="PNG")
+        image = SimpleUploadedFile("p.png", buffer.getvalue(), content_type="image/png")
+        def fake_upload(field, instance, add):
+            # Mimic Cloudinary: upload, then store the resulting public id.
+            setattr(instance, field.attname, "https://example.com/p.png")
+            return "https://example.com/p.png"
+
+        with patch("cloudinary.models.CloudinaryField.pre_save", fake_upload):
+            response = self.client.post("/api/add-product/", {
+                "title": "No description", "price": 1000, "quantity": 2,
+                "category": make_category().pk, "product_image": image,
+            })
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_model_allows_blank_description(self):
+        self.assertTrue(Product._meta.get_field("description").blank)
+
     def test_plan_product_limit_enforced(self):
+        make_product(self.vendor)
         make_product(self.vendor)
         response = self.client.post("/api/add-product/", {"title": "Second"})
         self.assertEqual(response.status_code, 403)
