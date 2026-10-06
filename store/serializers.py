@@ -76,6 +76,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "review_count",
             "featured",
             "status",
+            "moderation_note",
             "vendor",
             "created_at",
         ]

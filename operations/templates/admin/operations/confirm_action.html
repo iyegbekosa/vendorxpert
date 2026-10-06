@@ -1,0 +1,28 @@
+{% extends "admin/base_site.html" %}
+{% load i18n l10n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a> ›
+  <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a> › {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>{{ title }}</h1>
+<div class="module" style="padding: 12px 16px; max-width: 760px;">
+  <p><strong>What happens:</strong> {{ consequences }}</p>
+  <p><strong>Reversible:</strong> {{ reversible }}</p>
+  <p><strong>Affects {{ queryset|length }} item{{ queryset|length|pluralize }}:</strong></p>
+  <ul>{% for obj in queryset %}<li>{{ obj }}</li>{% endfor %}</ul>
+
+  <form method="post">{% csrf_token %}
+    {% for obj in queryset %}<input type="hidden" name="{{ action_checkbox_name }}" value="{{ obj.pk|unlocalize }}">{% endfor %}
+    <input type="hidden" name="action" value="{{ action_name }}">
+    <input type="hidden" name="apply" value="1">
+    {{ form.as_p }}
+    <input type="submit" class="default" value="{{ submit_label }}">
+    <a href="{% url opts|admin_urlname:'changelist' %}" class="button cancel-link">Cancel</a>
+  </form>
+</div>
+{% endblock %}

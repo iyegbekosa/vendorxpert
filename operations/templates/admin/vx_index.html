@@ -1,0 +1,48 @@
+{% extends "admin/index.html" %}
+{% load i18n %}
+
+{% block extrastyle %}{{ block.super }}
+<style>
+  .vx-dash { margin: 0 0 24px; }
+  .vx-dash h2 { font-size: 15px; margin: 18px 0 8px; color: var(--body-quiet-color); text-transform: uppercase; letter-spacing: .04em; }
+  .vx-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .vx-card { display: block; padding: 14px 16px; border: 1px solid var(--hairline-color); border-radius: 10px; background: var(--body-bg); color: var(--body-fg); text-decoration: none; }
+  a.vx-card:hover { border-color: var(--link-fg); }
+  .vx-card.alert { border-color: #e67e22; background: rgba(230, 126, 34, .08); }
+  .vx-card .vx-value { font-size: 24px; font-weight: 600; line-height: 1.2; }
+  .vx-card .vx-label { font-size: 13px; color: var(--body-quiet-color); }
+  .vx-card .vx-hint { font-size: 12px; color: var(--body-quiet-color); margin-top: 4px; }
+  .vx-audit { margin-top: 18px; }
+  .vx-audit td { font-size: 13px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="vx-dash">
+  {% for section in dashboard.sections %}
+    <h2>{{ section.title }}</h2>
+    <div class="vx-cards">
+      {% for card in section.cards %}
+        {% if card.url %}<a class="vx-card{% if card.alert %} alert{% endif %}" href="{{ card.url }}">{% else %}<div class="vx-card">{% endif %}
+          <div class="vx-value">{{ card.value }}</div>
+          <div class="vx-label">{{ card.label }}</div>
+          {% if card.hint %}<div class="vx-hint">{{ card.hint }}</div>{% endif %}
+        {% if card.url %}</a>{% else %}</div>{% endif %}
+      {% endfor %}
+    </div>
+  {% endfor %}
+
+  {% if dashboard.recent_audit %}
+    <div class="vx-audit module">
+      <h2>Recent staff actions</h2>
+      <table style="width:100%">
+        {% for entry in dashboard.recent_audit %}
+          <tr><td>{{ entry.created_at|date:"d M H:i" }}</td><td>{{ entry.actor_label }}</td><td><code>{{ entry.action }}</code></td><td>{{ entry.target_label }}</td><td>{{ entry.reason|truncatechars:60 }}</td></tr>
+        {% endfor %}
+      </table>
+      <p><a href="{% url 'admin:operations_auditlog_changelist' %}">Full audit log</a></p>
+    </div>
+  {% endif %}
+</div>
+{{ block.super }}
+{% endblock %}

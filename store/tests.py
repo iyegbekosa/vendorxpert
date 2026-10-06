@@ -332,6 +332,14 @@ class ReviewTests(APITestCase):
         self.client.force_authenticate(self.buyer)
         self.url = f"/api/add-review/{self.product.pk}/"
 
+    def test_public_reviews_list_with_stats(self):
+        self.client.post(self.url, {"rating": 4, "text": "Good"}, format="json")
+        self.client.force_authenticate(None)
+        response = self.client.get(f"/api/product/{self.product.pk}/reviews/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["rating_stats"]["average_rating"], 4)
+
     def test_rating_must_be_between_one_and_five(self):
         self.assertEqual(self.client.post(self.url, {"rating": 9}, format="json").status_code, 400)
         self.assertEqual(self.client.post(self.url, {"rating": 0}, format="json").status_code, 400)

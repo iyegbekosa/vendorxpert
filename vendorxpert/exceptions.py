@@ -92,6 +92,9 @@ def api_exception_handler(exc, context):
         return None
 
     response.data = normalize_error_payload(response.data)
+    if response.status_code == 404 and "matches the given query" in response.data["error"]:
+        # Django's default 404 text names internal models; say it plainly.
+        response.data["error"] = "We couldn't find that. It may have been removed."
     wait = getattr(exc, "wait", None)
     if wait is not None:
         response.data["retry_after"] = int(wait)

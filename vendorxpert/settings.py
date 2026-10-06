@@ -45,7 +45,7 @@ FRONTEND_URL = config("FRONTEND_URL", default="https://vendorxprt.com").rstrip("
 # Application definition
 
 INSTALLED_APPS = [
-    "django.contrib.admin",
+    "operations.apps.VendorXprtAdminConfig",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
@@ -214,6 +214,7 @@ REST_FRAMEWORK = {
         "otp_verify": "20/hour",
         "otp_resend": "5/hour",
         "bank_lookup": "30/hour",
+        "support_ticket": "20/hour",
     },
     "EXCEPTION_HANDLER": "vendorxpert.exceptions.api_exception_handler",
     "DEFAULT_RENDERER_CLASSES": ["vendorxpert.exceptions.ApiJSONRenderer"]

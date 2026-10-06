@@ -9,6 +9,7 @@ urlpatterns = [
     path("", include("core.urls")),
     path("", include("userprofile.urls")),
     path("", include("store.urls")),
+    path("", include("operations.urls")),
 ]
 
 if settings.ENABLE_API_DOCS:
