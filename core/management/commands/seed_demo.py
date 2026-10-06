@@ -2,6 +2,8 @@
 
     python manage.py seed_demo           # add demo data (idempotent: resets first)
     python manage.py seed_demo --clear   # only remove demo data
+    python manage.py seed_demo --orders-for you@example.com
+                                         # also give a real account orders to rate
 
 Every demo account uses an ``@demo.vendorxprt.test`` email, so demo data can
 be removed without touching real records. No Paystack or email calls are made.
@@ -129,8 +131,13 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--clear", action="store_true", help="Only remove demo data.")
         parser.add_argument("--force", action="store_true", help="Allow running with DEBUG=False.")
+        parser.add_argument(
+            "--orders-for",
+            metavar="EMAIL",
+            help="Also create paid orders from demo vendors for this existing account.",
+        )
 
-    def handle(self, *args, clear=False, force=False, **options):
+    def handle(self, *args, clear=False, force=False, orders_for=None, **options):
         if not settings.DEBUG and not force:
             raise CommandError(
                 "Refusing to seed demo data with DEBUG=False. Use --force only on a staging database."
@@ -142,6 +149,8 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(f"Removed {removed} demo accounts."))
                 return
             self.seed()
+            if orders_for:
+                self.seed_orders_for(orders_for)
 
         self.stdout.write(self.style.SUCCESS("Demo data ready.\n"))
         self.stdout.write(f"Password for every demo account: {DEMO_PASSWORD}")
@@ -255,6 +264,30 @@ class Command(BaseCommand):
             f"{Order.objects.filter(created_by__in=shoppers).count()} orders."
         )
 
+    def seed_orders_for(self, email):
+        """Paid orders for a real account: two collected (ready to rate), one
+        waiting for pickup. Demo orders are removed with --clear like the rest."""
+        user = UserProfile.objects.filter(email__iexact=email).first()
+        if user is None:
+            raise CommandError(f"No account with email {email}.")
+        rng = random.Random(7)
+        now = timezone.now()
+        available = list(
+            Product.objects.purchasable()
+            .filter(vendor__user__email__endswith=f"@{DEMO_DOMAIN}")
+            .exclude(vendor__user=user)
+            .select_related("vendor")
+        )
+        if len(available) < 4:
+            raise CommandError("Not enough demo products to create orders.")
+        rng.shuffle(available)
+        plan = [(available[0:2], True, 6), (available[2:3], True, 3), (available[3:5], False, 0)]
+        for products, collected, days_ago in plan:
+            self.create_paid_order(
+                user, products, rng, now - timedelta(days=days_ago, hours=2), collected=collected, review=False
+            )
+        self.stdout.write(f"Created 3 paid orders for {user.email} (2 collected and unrated, 1 awaiting pickup).")
+
     def subscription_fields(self, status, plans, now):
         if status == "active":
             return {
@@ -283,7 +316,7 @@ class Command(BaseCommand):
             "trial_end": now + timedelta(days=6),
         }
 
-    def create_paid_order(self, buyer, products, rng, paid_at, collected):
+    def create_paid_order(self, buyer, products, rng, paid_at, collected, review=True):
         quantities = {product.pk: rng.randint(1, min(2, product.quantity)) for product in products}
         subtotal = sum(product.price * quantities[product.pk] for product in products)
         fee = calculate_service_fee(subtotal)
@@ -292,7 +325,7 @@ class Command(BaseCommand):
             first_name=buyer.first_name,
             last_name=buyer.last_name or "Demo",
             phone=f"+23480{rng.randint(10_000_000, 99_999_999)}",
-            pickup_location=buyer.hostel or "admin",
+            pickup_location=buyer.hostel or "hall_2",
             total_cost=subtotal,
             service_fee=fee,
             is_paid=True,
@@ -312,7 +345,7 @@ class Command(BaseCommand):
                 quantity=max(product.quantity - quantities[product.pk], 0)
             )
             product.refresh_from_db(fields=["quantity"])
-            if collected and not Review.objects.filter(product=product, author=buyer).exists():
+            if review and collected and not Review.objects.filter(product=product, author=buyer).exists():
                 rating, text = rng.choice(REVIEW_TEXTS)
                 Review.objects.create(
                     product=product,
